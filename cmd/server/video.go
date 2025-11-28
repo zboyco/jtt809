@@ -148,7 +148,7 @@ func (g *JT809Gateway) sendMonitorRequest(req MonitorRequest, startup bool) erro
 	if state == nil {
 		return fmt.Errorf("platform %d not online", req.UserID)
 	}
-	if state.SubConn == nil {
+	if state.SubClient == nil {
 		return errors.New("sub link is not established")
 	}
 	var body jtt809.Body
@@ -177,7 +177,7 @@ func (g *JT809Gateway) sendMonitorRequest(req MonitorRequest, startup bool) erro
 		return fmt.Errorf("encode package: %w", err)
 	}
 	g.logPacket("sub", "send", fmt.Sprintf("%d", req.UserID), data)
-	if _, err := state.SubConn.Write(data); err != nil {
+	if err := state.SubClient.Send(data); err != nil {
 		return fmt.Errorf("send frame: %w", err)
 	}
 	action := "startup"

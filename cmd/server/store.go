@@ -2,10 +2,10 @@ package main
 
 import (
 	"fmt"
-	"net"
 	"sync"
 	"time"
 
+	"github.com/zboyco/go-server/client"
 	"github.com/zboyco/jtt809/pkg/jtt809"
 )
 
@@ -23,7 +23,7 @@ type PlatformState struct {
 	DownLinkIP    string
 	DownLinkPort  uint16
 	MainSessionID string
-	SubConn       net.Conn
+	SubClient     *client.SimpleClient
 	Password      string // 用于从链路重连
 	Reconnecting  bool   // 是否正在重连，防止重复重连
 
@@ -122,14 +122,14 @@ func (s *PlatformStore) BindMainSession(sessionID string, req jtt809.LoginReques
 }
 
 // BindSubSession 记录从链路连接。
-func (s *PlatformStore) BindSubSession(userID uint32, conn net.Conn) {
+func (s *PlatformStore) BindSubSession(userID uint32, c *client.SimpleClient) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	state := s.ensurePlatformLocked(userID)
-	if state.SubConn != nil {
-		state.SubConn.Close()
+	if state.SubClient != nil {
+		state.SubClient.Close()
 	}
-	state.SubConn = conn
+	state.SubClient = c
 	state.LastSubHeartbeat = time.Now()
 }
 
@@ -159,20 +159,20 @@ func (s *PlatformStore) RemoveSession(sessionID string) {
 		s.mu.Unlock()
 		return
 	}
-	var connToClose net.Conn
+	var clientToClose *client.SimpleClient
 	if state.MainSessionID == sessionID {
 		state.MainSessionID = ""
 		// 保存连接引用，在锁外关闭以避免死锁
 		// 主链路断开时，从链路不需要重连
-		connToClose = state.SubConn
-		state.SubConn = nil
+		clientToClose = state.SubClient
+		state.SubClient = nil
 	}
 	delete(s.sessionIndex, sessionID)
 	s.mu.Unlock()
 
 	// 在锁外关闭连接，避免与readSubLinkLoop的defer中的ClearSubConn死锁
-	if connToClose != nil {
-		connToClose.Close()
+	if clientToClose != nil {
+		clientToClose.Close()
 	}
 }
 
@@ -259,7 +259,7 @@ func (s *PlatformStore) ClearSubConn(userID uint32) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if state, ok := s.platforms[userID]; ok {
-		state.SubConn = nil
+		state.SubClient = nil
 	}
 }
 
@@ -324,7 +324,7 @@ func (state *PlatformState) snapshotLocked() PlatformSnapshot {
 		DownLinkIP:    state.DownLinkIP,
 		DownLinkPort:  state.DownLinkPort,
 		MainSessionID: state.MainSessionID,
-		SubConnected:  state.SubConn != nil,
+		SubConnected:  state.SubClient != nil,
 		Password:      state.Password,
 		LastMainBeat:  state.LastMainHeartbeat,
 		LastSubBeat:   state.LastSubHeartbeat,

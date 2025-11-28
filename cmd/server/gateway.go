@@ -1,18 +1,17 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"sync"
 	"time"
 
 	goserver "github.com/zboyco/go-server"
+	"github.com/zboyco/go-server/client"
 	"github.com/zboyco/jtt809/pkg/jtt809"
 	"github.com/zboyco/jtt809/pkg/jtt809/jt1078"
 )
@@ -194,13 +193,19 @@ func (g *JT809Gateway) connectSubLinkWithRetry(ip string, port uint16, userID ui
 }
 
 func (g *JT809Gateway) connectSubLink(ip string, port uint16, userID uint32, password string) bool {
-	addr := net.JoinHostPort(ip, fmt.Sprintf("%d", port))
-	slog.Info("connecting sub link", "addr", addr, "user_id", userID)
+	slog.Info("connecting sub link", "ip", ip, "port", port, "user_id", userID)
 
-	conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
-	if err != nil {
-		slog.Error("connect sub link failed", "addr", addr, "err", err)
+	c := client.NewSimpleClient(goserver.TCP, ip, int(port))
+	c.SetScannerSplitFunc(splitJT809Frames)
+
+	if err := c.Connect(); err != nil {
+		slog.Error("connect sub link failed", "err", err)
 		return false
+	}
+
+	// 设置读写超时
+	if conn := c.GetRawConn(); conn != nil {
+		conn.SetDeadline(time.Now().Add(10 * time.Second))
 	}
 
 	// Send Login
@@ -216,79 +221,64 @@ func (g *JT809Gateway) connectSubLink(ip string, port uint16, userID uint32, pas
 	}, req)
 
 	g.logPacket("sub", "send", fmt.Sprintf("%d", userID), pkg)
-	if _, err := conn.Write(pkg); err != nil {
+	if err := c.Send(pkg); err != nil {
 		slog.Error("send sub login failed", "err", err)
-		conn.Close()
+		c.Close()
 		return false
 	}
 
 	// Read Response
-	// We need to read one frame.
-	scanner := bufio.NewScanner(conn)
-	scanner.Split(splitJT809Frames)
-
-	if !scanner.Scan() {
-		slog.Error("read sub login response failed", "err", scanner.Err())
-		conn.Close()
+	respData, err := c.Receive()
+	if err != nil {
+		slog.Error("read sub login response failed", "err", err)
+		c.Close()
 		return false
 	}
-	respData := scanner.Bytes()
 	g.logPacket("sub", "recv", fmt.Sprintf("%d", userID), respData)
 
 	frame, err := jtt809.DecodeFrame(respData)
 	if err != nil {
 		slog.Error("decode sub login response failed", "err", err)
-		conn.Close()
+		c.Close()
 		return false
 	}
 
 	if frame.BodyID != 0x9002 {
 		slog.Error("unexpected sub login response", "msg_id", fmt.Sprintf("0x%04X", frame.BodyID))
-		conn.Close()
+		c.Close()
 		return false
 	}
 
 	loginResp, err := jtt809.ParseSubLinkLoginResponse(frame)
 	if err != nil {
 		slog.Error("parse sub login response failed", "err", err)
-		conn.Close()
+		c.Close()
 		return false
 	}
 
-	// 校验接入码
-	// 注意：2019版 LoginRequest 中已无 GNSSCenterID，该信息在 Header 中
-	// 这里可以校验 Header 中的 GNSSCenterID 是否与配置匹配
-	// if frame.Header.GNSSCenterID != g.cfg.CenterID { ... }
-
-	// 校验用户
-	// This part seems to be for a server receiving a login, not a client connecting.
-	// The original code does not have this logic here.
-	// If this is intended to be added, it needs to be placed in a server-side login handler.
-	// For now, I'm commenting it out as it doesn't fit the context of connectSubLink.
-	/*
-		user, ok := g.store.GetUser(req.UserID) // req is SubLinkLoginRequest, not the main login request
-		if !ok {
-			return jtt809.LoginResponse{Result: jtt809.LoginUnregistered, VerifyCode: 0}, nil
-		}
-	*/
-
 	if loginResp.Result != 0 {
 		slog.Error("sub link login refused", "result", loginResp.Result)
-		conn.Close()
+		c.Close()
 		return false
 	}
 
 	slog.Info("sub link connected and logged in", "user_id", userID)
-	g.store.BindSubSession(userID, conn)
 
-	go g.readSubLinkLoop(conn, userID, scanner, true)
-	go g.keepAliveSubLink(conn, userID)
+	// 清除超时限制，后续由心跳保活
+	if conn := c.GetRawConn(); conn != nil {
+		conn.SetDeadline(time.Time{})
+	}
+
+	g.store.BindSubSession(userID, c)
+
+	go g.readSubLinkLoop(c, userID, true)
+	go g.keepAliveSubLink(c, userID)
 	return true
 }
 
-func (g *JT809Gateway) readSubLinkLoop(conn net.Conn, userID uint32, scanner *bufio.Scanner, shouldReconnect bool) {
+func (g *JT809Gateway) readSubLinkLoop(c *client.SimpleClient, userID uint32, shouldReconnect bool) {
 	defer func() {
-		conn.Close()
+		c.Close()
 		g.store.ClearSubConn(userID)
 		slog.Info("sub link closed", "user_id", userID)
 		// 仅在需要重连时触发
@@ -296,11 +286,13 @@ func (g *JT809Gateway) readSubLinkLoop(conn net.Conn, userID uint32, scanner *bu
 			go g.reconnectSubLink(userID)
 		}
 	}()
-	for scanner.Scan() {
-		g.handleSubMessage(userID, scanner.Bytes())
-	}
-	if err := scanner.Err(); err != nil {
-		slog.Error("sub link read error", "user_id", userID, "err", err)
+	for {
+		data, err := c.Receive()
+		if err != nil {
+			slog.Error("sub link read error", "user_id", userID, "err", err)
+			return
+		}
+		g.handleSubMessage(userID, data)
 	}
 }
 
@@ -342,7 +334,7 @@ func (g *JT809Gateway) checkConnections() {
 	}
 }
 
-func (g *JT809Gateway) keepAliveSubLink(conn net.Conn, userID uint32) {
+func (g *JT809Gateway) keepAliveSubLink(c *client.SimpleClient, userID uint32) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
@@ -351,10 +343,10 @@ func (g *JT809Gateway) keepAliveSubLink(conn net.Conn, userID uint32) {
 			Version: jtt809.Version{Major: 1, Minor: 0, Patch: 0},
 		})
 		g.logPacket("sub", "send", fmt.Sprintf("%d", userID), hb)
-		if _, err := conn.Write(hb); err != nil {
+		if err := c.Send(hb); err != nil {
 			slog.Warn("send sub heartbeat failed", "user_id", userID, "err", err)
 			// 心跳失败，主动关闭连接以触发readSubLinkLoop退出
-			conn.Close()
+			c.Close()
 			return
 		}
 	}
@@ -654,7 +646,7 @@ func parseVehicleRegistration(payload []byte, version string) (*VehicleRegistrat
 		lenPlatform = 11
 		lenProducer = 11
 		lenModel = 30
-		lenIMEI = 30
+		lenIMEI = 15
 		lenTermID = 30
 		lenSIM = 13
 	}

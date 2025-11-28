@@ -24,6 +24,7 @@ const (
 type LoginRequest struct {
 	UserID          uint32
 	Password        string
+	AccessCode      uint32  // 2019版本新增：下级平台接入码
 	DownLinkIP      string
 	DownLinkPort    uint16
 	ProtocolVersion [3]byte // 2019版本新增：协议版本号
@@ -38,6 +39,9 @@ func (l LoginRequest) Encode() ([]byte, error) {
 	var buf bytes.Buffer
 	_ = binary.Write(&buf, binary.BigEndian, l.UserID)
 	buf.Write(PadRightGBK(l.Password, 8))
+	if l.AccessCode != 0 {
+		_ = binary.Write(&buf, binary.BigEndian, l.AccessCode)
+	}
 	buf.Write(PadRightGBK(l.DownLinkIP, 32))
 	_ = binary.Write(&buf, binary.BigEndian, l.DownLinkPort)
 	buf.Write(l.ProtocolVersion[:])
@@ -55,21 +59,24 @@ func (l LoginRequest) validate() error {
 }
 
 // ParseLoginRequest 解析主链路登录请求业务体，返回结构化的登录参数。
+// 仅支持 JT/T809-2019 版本协议
 func ParseLoginRequest(body []byte) (LoginRequest, error) {
-	// 2019版长度：4+8+32+2+3 = 49
-	// 2011版长度：4+8+32+2 = 46
-	if len(body) < 46 {
-		return LoginRequest{}, errors.New("login body too short")
+	// 2019版长度：4+8+4+32+2(+3) = 50-53字节（ProtocolVersion可选）
+	if len(body) < 50 {
+		return LoginRequest{}, errors.New("login body too short for 2019 version")
 	}
+
 	req := LoginRequest{
-		UserID:       binary.BigEndian.Uint32(body[0:4]),
-		Password:     strings.TrimRight(string(body[4:12]), "\x00"),
-		DownLinkIP:   strings.TrimRight(string(body[12:44]), "\x00"),
-		DownLinkPort: binary.BigEndian.Uint16(body[44:46]),
+		UserID:     binary.BigEndian.Uint32(body[0:4]),
+		Password:   strings.TrimRight(string(body[4:12]), "\x00"),
+		AccessCode: binary.BigEndian.Uint32(body[12:16]),
+		DownLinkIP: strings.TrimRight(string(body[16:48]), "\x00"),
+		DownLinkPort: binary.BigEndian.Uint16(body[48:50]),
 	}
-	// 尝试解析协议版本号（如果有）
-	if len(body) >= 49 {
-		copy(req.ProtocolVersion[:], body[46:49])
+
+	// 解析协议版本号（如果有）
+	if len(body) >= 53 {
+		copy(req.ProtocolVersion[:], body[50:53])
 	}
 	return req, nil
 }

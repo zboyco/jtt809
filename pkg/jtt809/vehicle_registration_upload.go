@@ -15,10 +15,10 @@ type VehicleRegistrationUpload struct {
 
 	PlatformID        string // 11 字节
 	ProducerID        string // 11 字节
-	TerminalModelType string // 30 字节
-	IMEI              string // 15 字节
-	TerminalID        string // 30 字节，需转为大写
-	TerminalSIM       string // 13 字节
+	TerminalModelType string // 30 字节（2019版）
+	IMEI              string // 15 字节（2019版）
+	TerminalID        string // 30 字节（2019版），需转为大写
+	TerminalSIM       string // 13 字节（2019版）
 }
 
 func (VehicleRegistrationUpload) MsgID() uint16 { return MsgIDDynamicInfo }
@@ -51,7 +51,7 @@ func (v VehicleRegistrationUpload) encodeRegistrationBody() ([]byte, error) {
 	buf.Write(PadRightGBK(v.PlatformID, 11))
 	buf.Write(PadRightGBK(v.ProducerID, 11))
 	buf.Write(PadRightGBK(v.TerminalModelType, 30))
-	buf.Write(PadRightGBK(v.IMEI, 30)) // 2019版本：30字节
+	buf.Write(PadRightGBK(v.IMEI, 15)) // 2019版本：15字节
 	buf.Write(PadRightGBK(strings.ToUpper(v.TerminalID), 30))
 	buf.Write(PadRightGBK(v.TerminalSIM, 13))
 	return buf.Bytes(), nil

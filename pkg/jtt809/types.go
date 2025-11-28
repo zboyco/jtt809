@@ -189,13 +189,14 @@ func DecodeFrame(data []byte) (*Frame, error) {
 		EncryptKey:   binary.BigEndian.Uint32(unescaped[19:23]),
 	}
 	headerLen := 22
-	// 简单判断：如果版本号 Patch >= 19，则认为是 2019 版，包含 UTC
-	// 或者如果长度足够且业务体解不出来？不，应该按版本。
-	// 但有的实现可能 2011 也带 UTC？标准 2011 不带。
-	// 这里我们严格按版本判断，或者保留 WithUTC 标记的判断（但 Decode 时无法预知 WithUTC，只能靠版本或长度特征）
-	// 之前的逻辑太粗暴了。
-	// 让我们改为：如果 Version.Patch >= 19，则 headerLen = 30
-	if header.Version.Patch >= 19 {
+	// 判断是否包含UTC字段：优先看版本号，其次看实际数据长度
+	// 兼容某些客户端Version字段填错但实际按2019版发送的情况
+	hasUTC := header.Version.Patch >= 19
+	if !hasUTC && len(unescaped) >= 31+22 {
+		// 如果数据长度足够容纳UTC字段(至少31+22字节)，尝试按2019版解析
+		hasUTC = true
+	}
+	if hasUTC {
 		if len(unescaped) < 31 {
 			return nil, errors.New("header too short for 2019 version")
 		}
