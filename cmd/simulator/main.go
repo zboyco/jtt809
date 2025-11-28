@@ -77,6 +77,7 @@ func main() {
 	// Start heartbeat goroutine after login
 	msgSN := uint32(2) // Start from 2, 1 was used for login
 	mainMsgSN = &msgSN
+	mainConn = conn // 保存主链路连接，用于GPS数据上报
 	go sendMainHeartbeat(conn, &msgSN)
 
 	// 4. Read Loop
@@ -523,7 +524,7 @@ func startGPSReporting(conn net.Conn) {
 		return
 	}
 	gpsMonitored = true
-	mainConn = conn
+	// 不修改 mainConn，保持使用主链路连接
 	log.Println("[GPS] Starting GPS reporting (5s interval)")
 	go func() {
 		gps := NewGPSSimulator()

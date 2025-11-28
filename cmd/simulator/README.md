@@ -2,9 +2,9 @@
 
 ## 📖 简介
 
-这是一个 **JT/T 809 下级平台模拟器**，用于测试上级平台服务器的功能。模拟器实现了标准的 JT/T 809 协议主链路和从链路交互流程。
+JT/T 809 下级平台模拟器用于测试上级平台服务器的功能，完整实现了标准的 JT/T 809 协议主链路和从链路交互流程。
 
-### 主要功能
+### 核心功能
 
 - ✅ 主动连接上级平台主链路
 - ✅ 发送登录请求，上报从链路地址
@@ -16,12 +16,14 @@
 - ✅ GPS实时定位数据上报（可配置间隔）
 - ✅ 实时视频请求应答（JT/T 1078）
 
+---
+
 ## 🚀 快速开始
 
 ### 1. 编译
 
 ```bash
-cd /Users/shannon/go/src/github.com/zboyco/jtt
+cd /Users/shannon/go/src/github.com/zboyco/jtt809
 go build -o simulator ./cmd/simulator
 ```
 
@@ -55,6 +57,8 @@ go build -o simulator ./cmd/simulator
   -location 5
 ```
 
+---
+
 ## ⚙️ 命令行参数
 
 | 参数 | 类型 | 默认值 | 说明 |
@@ -70,38 +74,40 @@ go build -o simulator ./cmd/simulator
 | `-video-ip` | string | `127.0.0.1` | 视频服务器IP（用于mock应答） |
 | `-video-port` | int | `8080` | 视频服务器端口（用于mock应答） |
 
+---
+
 ## 🔄 工作流程
 
 ```mermaid
 sequenceDiagram
     participant Simulator as 模拟器<br/>(下级平台)
     participant Server as 服务器<br/>(上级平台)
-    
+
     Note over Simulator: 1. 启动从链路监听
     Simulator->>Simulator: 监听端口 9000
-    
+
     Note over Simulator,Server: 2. 主链路连接
     Simulator->>Server: TCP连接到 :10709
     Simulator->>Server: 发送登录请求<br/>(含从链路IP:Port)
     Server->>Simulator: 返回登录响应
-    
+
     Note over Simulator,Server: 3. 从链路连接
     Server->>Simulator: 主动连接从链路 :9000
     Server->>Simulator: 发送从链路登录请求
     Simulator->>Server: 返回从链路登录响应
-    
+
     Note over Simulator: 4. 车辆数据上报
     Simulator->>Server: 车辆注册信息 (0x1201)
-    
+
     Note over Simulator,Server: 5. 保持连接
     loop 每30秒
         Simulator->>Server: 主链路心跳 (0x1005)
         Server->>Simulator: 心跳响应 (0x1006)
     end
-    
+
     Server->>Simulator: 从链路心跳 (0x9005)
     Simulator->>Server: 心跳响应 (0x9006)
-    
+
     loop 每10秒
         Simulator->>Server: GPS定位数据 (0x1202)
     end
@@ -111,13 +117,15 @@ sequenceDiagram
     Simulator->>Server: 视频请求应答 (0x1800/0x1801)
 ```
 
+---
+
 ## 📋 测试示例
 
 ### 场景1：本地测试
 
 **终端1 - 启动上级平台服务器**：
 ```bash
-cd /Users/shannon/go/src/github.com/zboyco/jtt
+cd /Users/shannon/go/src/github.com/zboyco/jtt809
 go run ./cmd/server
 ```
 
@@ -167,6 +175,8 @@ Heartbeat Response Received
 - ⚠️ 检查防火墙规则，确保端口开放
 - ⚠️ 如果模拟器在NAT后，需要配置端口映射
 
+---
+
 ## 🔍 日志说明
 
 模拟器会输出详细的日志信息，帮助调试：
@@ -188,6 +198,8 @@ Heartbeat Response Received
 | `[Main] Received Video Request` | 收到实时视频请求 |
 | `[Main] Video Request` | 视频请求详情（车牌、通道等） |
 | `[Main] Video Response Sent` | 已发送视频请求应答 |
+
+---
 
 ## 🛠️ 开发说明
 
@@ -215,7 +227,9 @@ Heartbeat Response Received
 ./simulator -location 0
 ```
 
-## 🐛 常见问题
+---
+
+## ❓ 常见问题
 
 ### Q1: 连接失败？
 **A:** 检查：
@@ -234,30 +248,46 @@ Heartbeat Response Received
 1. 用户ID和密码是否与服务器配置匹配
 2. 查看服务器日志中的认证失败原因
 
+### Q4: GPS数据没有上报？
+**A:** 检查：
+1. `-location` 参数是否设置为0（禁用）
+2. 主链路是否已成功建立
+3. 查看模拟器日志中的错误信息
+
+### Q5: 视频请求没有响应？
+**A:** 检查：
+1. 主链路是否已成功建立
+2. 车牌号是否匹配
+3. 查看模拟器日志中的视频请求详情
+
+---
+
 ## 📚 相关文档
 
 - [上级平台服务器文档](../server/README.md)
 - [JT/T 809 协议库](../../pkg/jtt809)
 
-## 🔗 协议标准
+---
+
+## 🔧 协议实现
 
 本模拟器实现了以下 JT/T 809 标准消息：
 
-- **主链路**：
-  - `0x1001`: 登录请求
-  - `0x1002`: 登录应答
-  - `0x1005`: 主链路心跳请求（每30秒主动发送）
-  - `0x1006`: 主链路心跳应答
-  - `0x1200`: 车辆动态信息交换（上行）
-    - `0x1201`: 上传车辆注册信息
-    - `0x1202`: 实时上传车辆定位信息
-  - `0x1800`: 实时音视频（上行）
-    - `0x1801`: 实时音视频请求应答
+**主链路（下级平台 → 上级平台）**：
+- `0x1001`: 登录请求
+- `0x1002`: 登录应答
+- `0x1005`: 主链路心跳请求（每30秒主动发送）
+- `0x1006`: 主链路心跳应答
+- `0x1200`: 车辆动态信息交换（上行）
+  - `0x1201`: 上传车辆注册信息
+  - `0x1202`: 实时上传车辆定位信息
+- `0x1800`: 实时音视频（上行）
+  - `0x1801`: 实时音视频请求应答
 
-- **从链路**：
-  - `0x9001`: 从链路连接请求
-  - `0x9002`: 从链路连接应答
-  - `0x9005`: 从链路心跳请求（被动响应）
-  - `0x9006`: 从链路心跳应答
-  - `0x9800`: 实时音视频（下行）
-    - `0x9801`: 实时音视频请求
+**从链路（上级平台 → 下级平台）**：
+- `0x9001`: 从链路连接请求
+- `0x9002`: 从链路连接应答
+- `0x9005`: 从链路心跳请求（被动响应）
+- `0x9006`: 从链路心跳应答
+- `0x9800`: 实时音视频（下行）
+  - `0x9801`: 实时音视频请求

@@ -1,11 +1,29 @@
 # JT/T 809 上级平台服务器
 
-## 快速启动
+## 📖 简介
+
+JT/T 809 上级平台服务器实现了道路运输车辆卫星定位系统平台间数据交换协议，用于接收下级平台上报的车辆定位、状态等信息，并提供车辆监控、视频请求等功能。
+
+### 核心特性
+
+- ✅ 支持 JT/T 809-2011 和 JT/T 809-2019 协议版本
+- ✅ 主链路和从链路双向通信
+- ✅ 多下级平台并发接入
+- ✅ 车辆注册信息管理
+- ✅ 实时GPS定位数据接收
+- ✅ 实时视频流请求（JT/T 1078）
+- ✅ 车辆定位信息订阅/取消订阅
+- ✅ HTTP管理接口
+- ✅ 连接空闲超时控制
+
+---
+
+## 🚀 快速启动
 
 ### 1. 构建服务
 
 ```bash
-cd /Users/shannon/go/src/github.com/zboyco/jtt
+cd /Users/shannon/go/src/github.com/zboyco/jtt809
 go build -o server ./cmd/server
 ```
 
@@ -49,7 +67,9 @@ go build -o server ./cmd/server
   -account "20001:pass2019:0x12345678:2019"
 ```
 
-## 使用模拟器测试
+---
+
+## 🧪 使用模拟器测试
 
 ### 1. 构建模拟器
 
@@ -95,17 +115,19 @@ time=... level=INFO msg="sub link connected and logged in" user_id=10001
 
 模拟器端：
 ```
-2025/11/27 10:00:00 Sub Link listening on 127.0.0.1:9001
-2025/11/27 10:00:00 Connecting to Main Link 127.0.0.1:10709...
-2025/11/27 10:00:00 Connected to Main Link
-2025/11/27 10:00:00 Login Response Received
-2025/11/27 10:00:00 Sub Link Incoming Connection from 127.0.0.1:xxxxx
-2025/11/27 10:00:00 Sub Link Login Request Received
+Sub Link listening on 127.0.0.1:9001
+Connecting to Main Link 127.0.0.1:10709...
+Connected to Main Link
+Login Response Received
+Sub Link Incoming Connection from 127.0.0.1:xxxxx
+Sub Link Login Request Received
 ```
 
-## HTTP 管理接口
+---
 
-HTTP 管理接口提供服务监控、平台状态查询和视频请求等功能。
+## 🌐 HTTP 管理接口
+
+HTTP 管理接口提供服务监控、平台状态查询、视频请求和车辆定位订阅等功能。
 
 ### 1. 健康检查
 
@@ -145,11 +167,11 @@ curl http://localhost:18080/api/platforms
 
 ---
 
-### 3. 请求视频流
+### 3. 请求实时视频流
 
 **端点**: `POST /api/video/request`
 
-**用途**: 向下级平台请求指定车辆的视频流地址（JT/T 1078 协议）
+**用途**: 向下级平台请求指定车辆的实时视频流地址（JT/T 1078 协议）
 
 **请求示例**:
 ```bash
@@ -193,7 +215,73 @@ curl -X POST http://localhost:18080/api/video/request \
 
 **注意**: 此接口仅发送请求到下级平台，实际的视频流地址会通过异步响应返回
 
-## 与真实下级平台对接
+---
+
+### 4. 订阅车辆定位信息
+
+**端点**: `POST /api/monitor/startup`
+
+**用途**: 向下级平台发送启动车辆定位信息交换请求，订阅指定车辆的GPS定位数据
+
+**请求示例**:
+```bash
+curl -X POST http://localhost:18080/api/monitor/startup \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": 10001,
+    "vehicle_no": "粤B12345",
+    "vehicle_color": 2,
+    "reason_code": 1
+  }'
+```
+
+**请求参数**:
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `user_id` | uint32 | 是 | 下级平台用户ID |
+| `vehicle_no` | string | 是 | 车牌号 |
+| `vehicle_color` | uint8 | 否 | 车牌颜色（默认2-蓝色） |
+| `reason_code` | uint8 | 否 | 申请原因：0-进入区域，1-人工指定，2-应急，3-其它（默认0） |
+
+**响应示例**:
+```json
+{
+  "status": "sent"
+}
+```
+
+---
+
+### 5. 取消订阅车辆定位信息
+
+**端点**: `POST /api/monitor/end`
+
+**用途**: 向下级平台发送结束车辆定位信息交换请求，取消订阅指定车辆的GPS定位数据
+
+**请求示例**:
+```bash
+curl -X POST http://localhost:18080/api/monitor/end \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": 10001,
+    "vehicle_no": "粤B12345",
+    "vehicle_color": 2,
+    "reason_code": 1
+  }'
+```
+
+**请求参数**: 与订阅接口相同
+
+**响应示例**:
+```json
+{
+  "status": "sent"
+}
+```
+
+---
+
+## 🔗 与真实下级平台对接
 
 ### 对接前准备
 
@@ -229,7 +317,9 @@ sudo ufw allow from 192.168.0.0/16 to any port 18080
 # 通常默认允许，无需特别配置
 ```
 
-## 常见问题
+---
+
+## ❓ 常见问题
 
 ### Q1: 下级平台连接后，从链路建立失败？
 **A:** 检查：
@@ -246,16 +336,56 @@ sudo ufw allow from 192.168.0.0/16 to any port 18080
 **A:** 访问 HTTP 接口：
 ```bash
 # 查看所有平台及车辆
-curl http://localhost:18080/status | jq
-
-# 查看指定平台
-curl http://localhost:18080/platform/10001 | jq '.vehicles'
+curl http://localhost:18080/api/platforms | jq
 ```
 
-## 技术支持
+### Q4: 视频请求发送后没有响应？
+**A:** 检查：
+1. 下级平台是否支持 JT/T 1078 协议
+2. 车牌号和车牌颜色是否正确
+3. 授权码是否有效
+4. 查看服务器日志中的错误信息
+
+### Q5: 订阅车辆定位后没有收到数据？
+**A:** 检查：
+1. 从链路是否已建立（查看日志）
+2. 下级平台是否支持该功能
+3. 车辆是否在线且有定位数据
+
+---
+
+## 📚 技术支持
 
 如遇到问题，请检查：
 1. 服务器日志输出
 2. 下级平台日志
 3. 网络连通性（主链路和从链路）
 4. 账号配置是否匹配
+
+---
+
+## 🔧 协议实现
+
+本服务器实现了以下 JT/T 809 标准消息：
+
+**主链路（下级平台 → 上级平台）**:
+- `0x1001`: 主链路登录请求
+- `0x1002`: 主链路登录应答
+- `0x1005`: 主链路心跳请求
+- `0x1006`: 主链路心跳应答
+- `0x1200`: 车辆动态信息交换（上行）
+  - `0x1201`: 上传车辆注册信息
+  - `0x1202`: 实时上传车辆定位信息
+- `0x1800`: 实时音视频（上行）
+  - `0x1801`: 实时音视频请求应答
+
+**从链路（上级平台 → 下级平台）**:
+- `0x9001`: 从链路连接请求
+- `0x9002`: 从链路连接应答
+- `0x9005`: 从链路心跳请求
+- `0x9006`: 从链路心跳应答
+- `0x9200`: 车辆动态信息交换（下行）
+  - `0x9205`: 申请交换指定车辆定位信息请求
+  - `0x9206`: 取消交换指定车辆定位信息请求
+- `0x9800`: 实时音视频（下行）
+  - `0x9801`: 实时音视频请求

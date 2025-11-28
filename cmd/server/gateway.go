@@ -114,6 +114,8 @@ func (g *JT809Gateway) handleMainMessage(session *goserver.AppSession, payload [
 		g.handleAlarmInteract(session, frame)
 	case jtt809.MsgIDDisconnNotify:
 		g.handleDisconnectInform(session, frame)
+	case jtt809.MsgIDRealTimeVideo:
+		g.handleRealTimeVideo(session, frame)
 	default:
 		slog.Debug("unhandled main message", "session", session.ID, "msg_id", fmt.Sprintf("0x%04X", frame.BodyID))
 	}
@@ -469,6 +471,32 @@ func (g *JT809Gateway) handleDisconnectInform(session *goserver.AppSession, fram
 		return
 	}
 	slog.Warn("platform disconnect notify", "session", session.ID, "code", disc.ErrorCode)
+}
+
+func (g *JT809Gateway) handleRealTimeVideo(session *goserver.AppSession, frame *jtt809.Frame) {
+	user, ok := g.sessionUser(session)
+	if !ok {
+		slog.Warn("real time video before login", "session", session.ID)
+		return
+	}
+	pkt, err := jtt809.ParseSubBusiness(frame.RawBody)
+	if err != nil {
+		slog.Warn("parse sub business failed", "session", session.ID, "err", err)
+		return
+	}
+	if pkt.SubBusinessID == jtt809.SubMsgRealTimeVideoStartupAck {
+		ack, err := jt1078.ParseRealTimeVideoStartupAck(pkt.Payload)
+		if err != nil {
+			slog.Warn("parse video ack failed", "session", session.ID, "err", err)
+			return
+		}
+		g.store.RecordVideoAck(user, pkt.Color, pkt.Plate, &VideoAckState{
+			Result:     ack.Result,
+			ServerIP:   ack.ServerIP,
+			ServerPort: ack.ServerPort,
+		})
+		slog.Info("video stream ack", "user_id", user, "plate", pkt.Plate, "server", ack.ServerIP, "port", ack.ServerPort, "result", ack.Result)
+	}
 }
 
 func (g *JT809Gateway) handleSubDisconnect(session *goserver.AppSession, frame *jtt809.Frame) {
