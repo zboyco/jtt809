@@ -355,6 +355,11 @@ func (g *JT809Gateway) keepAliveSubLink(c *client.SimpleClient, userID uint32) {
 func (g *JT809Gateway) handleHeartbeat(session *goserver.AppSession, frame *jtt809.Frame, isMain bool) ([]byte, error) {
 	if user, ok := g.sessionUser(session); ok {
 		g.store.RecordHeartbeat(user, isMain)
+		if isMain {
+			slog.Info("main link heartbeat", "session", session.ID, "user_id", user)
+		} else {
+			slog.Info("sub link heartbeat", "session", session.ID, "user_id", user)
+		}
 	}
 	if isMain {
 		return g.simpleResponse(session, "main", frame, jtt809.HeartbeatResponse{})

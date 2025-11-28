@@ -340,7 +340,7 @@ func sendVehicleRegistration(conn net.Conn, msgSN *uint32) {
 		PlatformID:        "Platform01",
 		ProducerID:        "Manufacturer",
 		TerminalModelType: "GPS-Model-X1",
-		IMEI:              "860123456789012345", // 2019版本：30字节（实际内容可以较短，会补齐）
+		IMEI:              "860123456789012", // 2019版本：15字节
 		TerminalID:        "TERM" + fmt.Sprintf("%d", *userID),
 		TerminalSIM:       "13800138000",
 	}
