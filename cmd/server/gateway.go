@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -159,7 +160,6 @@ func (g *JT809Gateway) handleMainLogin(session *goserver.AppSession, frame *jtt8
 	if resp.Result == jtt809.LoginOK {
 		session.SetAttr("userID", req.UserID)
 		session.SetAttr("link", "main")
-		session.SetAttr("version", acc.Version) // Store version in session
 		g.store.BindMainSession(session.ID, req, acc.Password)
 		if _, err := session.GetAttr("verifyCode"); err != nil {
 			session.SetAttr("verifyCode", acc.VerifyCode)
@@ -383,82 +383,51 @@ func (g *JT809Gateway) handleDynamicInfo(session *goserver.AppSession, frame *jt
 	}
 	switch {
 	case pkt.SubBusinessID == jtt809.SubMsgUploadVehicleReg:
-		version, _ := session.GetAttr("version")
-		verStr, _ := version.(string)
-		reg, err := parseVehicleRegistration(pkt.Payload, verStr)
+		reg, err := parseVehicleRegistration(pkt.Payload)
 		if err != nil {
 			slog.Warn("parse vehicle registration failed", "session", session.ID, "err", err)
 			return
 		}
 		g.store.UpdateVehicleRegistration(user, pkt.Color, pkt.Plate, reg)
 		slog.Info("vehicle registration", "user_id", user, "plate", pkt.Plate, "platform", reg.PlatformID)
-	case pkt.SubBusinessID == jtt809.SubMsgRealLocation2011:
-		if len(pkt.Payload) > 36 {
-			if pos2019, err := jtt809.ParseVehiclePosition2019(pkt.Payload); err == nil {
-				g.store.UpdateLocation(user, pkt.Color, pkt.Plate, nil, &pos2019, 0)
-				if innerPos, err := jtt809.ParseVehiclePosition(pos2019.GnssData); err == nil {
-					slog.Info("vehicle location (2019)", "user_id", user, "plate", pkt.Plate, "lat", float64(innerPos.Lat)/1000000.0, "lon", float64(innerPos.Lon)/1000000.0)
-				} else {
-					slog.Info("vehicle location (2019)", "user_id", user, "plate", pkt.Plate, "gnss_len", len(pos2019.GnssData))
-				}
-				return
-			}
-		}
-		pos, err := jtt809.ParseVehiclePosition(pkt.Payload)
+	case pkt.SubBusinessID == jtt809.SubMsgRealLocation:
+		pos, err := jtt809.ParseVehiclePosition2019(pkt.Payload)
 		if err != nil {
-			slog.Warn("parse vehicle position failed", "session", session.ID, "err", err)
+			slog.Warn("parse vehicle position 2019 failed", "session", session.ID, "err", err)
 			return
 		}
-		g.store.UpdateLocation(user, pkt.Color, pkt.Plate, &pos, nil, 0)
-		slog.Info("vehicle location", "user_id", user, "plate", pkt.Plate, "lat", float64(pos.Lat)/1000000.0, "lon", float64(pos.Lon)/1000000.0)
+		g.store.UpdateLocation(user, pkt.Color, pkt.Plate, &pos, 0)
+		if lon, lat, ok := extractLonLat(pos.GnssData); ok {
+			slog.Info("vehicle location", "user_id", user, "plate", pkt.Plate, "lon", lon, "lat", lat)
+		} else {
+			slog.Info("vehicle location", "user_id", user, "plate", pkt.Plate, "gnss_len", len(pos.GnssData))
+		}
 	case pkt.SubBusinessID == jtt809.SubMsgBatchLocation:
 		if len(pkt.Payload) == 0 {
 			return
 		}
 		count := int(pkt.Payload[0])
 		reader := pkt.Payload[1:]
-
-		// Determine data length based on version or payload size heuristic if version not set
-		version, _ := session.GetAttr("version")
-		if verStr, ok := version.(string); ok && verStr == "2019" {
-			// 2019 version might have different length or variable length.
-			// For now, assuming standard 2019 location is used if configured.
-			// However, standard 2019 location structure is complex.
-			// If the user strictly follows 2019, we should use ParseVehiclePosition2019.
-			// But BatchLocation in 2019 usually wraps the same structure.
-			// Let's check if we can distinguish by length.
-		}
-
-		for i := 0; i < count; i++ {
-			if len(reader) < 36 {
+		parsed := 0
+		for i := 0; i < count && len(reader) >= 5; i++ {
+			gnssLen := int(binary.BigEndian.Uint32(reader[1:5]))
+			totalLen := 1 + 4 + gnssLen + (11+4)*3
+			if gnssLen < 0 || len(reader) < totalLen {
 				break
 			}
-			// Try to parse as 2019 if configured or if length matches
-			// Note: 2019 position is variable length, making batch parsing hard without length prefix.
-			// In standard 809-2011, it's fixed 36.
-			// In 809-2019, it's fixed 64 bytes for basic info? No, it's variable.
-			// Actually, 0x1203 in 2019 is "Vehicle Positioning Information Re-transmission".
-			// The structure is: Count (1 byte) + N * (GNSS Data).
-			// GNSS Data in 2019 is 64 bytes (fixed part) + variable.
-			// If we are strictly 2011, it is 36 bytes.
-
-			step := 36
-			if verStr, ok := version.(string); ok && verStr == "2019" {
-				// 2019 fixed length part is often used in simple implementations, but let's be careful.
-				// If the library provides a parser that returns length, we should use it.
-				// Current library doesn't seem to expose length easily for 2019.
-				// Let's assume 2011 for now unless we implement full 2019 batch parsing.
-				// For the purpose of this fix, we will stick to 2011 default but allow extension.
-			}
-
-			pos, err := jtt809.ParseVehiclePosition(reader[:36])
+			pos, err := jtt809.ParseVehiclePosition2019(reader[:totalLen])
 			if err != nil {
+				slog.Warn("parse batch vehicle position 2019 failed", "session", session.ID, "index", i, "err", err)
 				break
 			}
-			g.store.UpdateLocation(user, pkt.Color, pkt.Plate, &pos, nil, count)
-			reader = reader[step:]
+			g.store.UpdateLocation(user, pkt.Color, pkt.Plate, &pos, count)
+			if lon, lat, ok := extractLonLat(pos.GnssData); ok {
+				slog.Info("batch location item", "user_id", user, "plate", pkt.Plate, "index", i, "lon", lon, "lat", lat)
+			}
+			reader = reader[totalLen:]
+			parsed++
 		}
-		slog.Info("batch location", "user_id", user, "plate", pkt.Plate, "count", count)
+		slog.Info("batch vehicle location (2019)", "user_id", user, "plate", pkt.Plate, "count", parsed)
 	// 注意：0x1701 (时效口令上报) 应该通过 0x1700 (视频鉴权) 主业务类型传输，
 	// 而不是通过 0x1200 (动态信息)。根据 JT/T 809 标准，视频相关消息应使用专门的 0x1700。
 	// 如果收到 0x1200 中的 0x1701，记录警告但不处理。
@@ -625,30 +594,28 @@ func splitJT809Frames(data []byte, atEOF bool) (advance int, token []byte, err e
 	return stop + 1, frame, nil
 }
 
-// parseVehicleRegistration 解码 0x1201 注册载荷。
-func parseVehicleRegistration(payload []byte, version string) (*VehicleRegistration, error) {
-	// 2011 version lengths
-	var (
-		lenPlatform = 11
-		lenProducer = 11
-		lenModel    = 20
-		lenIMEI     = 15
-		lenTermID   = 7
-		lenSIM      = 12
-	)
-
-	if version == "2019" {
-		lenPlatform = 11
-		lenProducer = 11
-		lenModel = 30
-		lenIMEI = 15
-		lenTermID = 30
-		lenSIM = 13
+func extractLonLat(gnss []byte) (float64, float64, bool) {
+	if len(gnss) < 36 {
+		return 0, 0, false
 	}
+	lon := float64(binary.BigEndian.Uint32(gnss[8:12])) / 1e6
+	lat := float64(binary.BigEndian.Uint32(gnss[12:16])) / 1e6
+	return lon, lat, true
+}
 
+// parseVehicleRegistration 解码 0x1201 注册载荷（2019版固定长度）。
+func parseVehicleRegistration(payload []byte) (*VehicleRegistration, error) {
+	const (
+		lenPlatform = 11
+		lenProducer = 11
+		lenModel    = 30
+		lenIMEI     = 15
+		lenTermID   = 30
+		lenSIM      = 13
+	)
 	total := lenPlatform + lenProducer + lenModel + lenIMEI + lenTermID + lenSIM
 	if len(payload) < total {
-		return nil, fmt.Errorf("registration payload too short: %d (expected %d for version %s)", len(payload), total, version)
+		return nil, fmt.Errorf("registration payload too short: %d (expected %d)", len(payload), total)
 	}
 	offset := 0
 	read := func(length int) []byte {

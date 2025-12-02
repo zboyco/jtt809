@@ -11,8 +11,8 @@ const (
 
 // SubBusinessType 定义子业务数据类型，截取常用值以支持定位、查岗等业务。
 const (
-	SubMsgRealLocation2011 uint16 = 0x1202 // 实时上传车辆定位信息
-	SubMsgBatchLocation    uint16 = 0x1203 // 车辆定位信息自动补报
+	SubMsgRealLocation uint16 = 0x1202 // 实时上传车辆定位信息
+	SubMsgBatchLocation uint16 = 0x1203 // 车辆定位信息自动补报
 	SubMsgUploadVehicleReg uint16 = 0x1201 // 上传车辆注册信息
 	SubMsgWarnSuperviseReq uint16 = 0x9401 // 报警督办请求
 	SubMsgPlatformQueryAck uint16 = 0x1301 // 平台查岗应答

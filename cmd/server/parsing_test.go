@@ -14,22 +14,15 @@ func TestParseVehicleRegistration(t *testing.T) {
 	}
 
 	// Helper to create payload
-	createPayload := func(version string, platform, producer, model, imei, termID, sim string) []byte {
-		var (
+	createPayload := func(platform, producer, model, imei, termID, sim string) []byte {
+		const (
 			lenPlatform = 11
 			lenProducer = 11
-			lenModel    = 20
+			lenModel    = 30
 			lenIMEI     = 15
-			lenTermID   = 7
-			lenSIM      = 12
+			lenTermID   = 30
+			lenSIM      = 13
 		)
-		if version == "2019" {
-			lenModel = 30
-			lenIMEI = 30
-			lenTermID = 30
-			lenSIM = 13
-		}
-
 		buf := make([]byte, 0)
 
 		pad := func(b []byte, length int) []byte {
@@ -47,23 +40,9 @@ func TestParseVehicleRegistration(t *testing.T) {
 		return buf
 	}
 
-	t.Run("Version 2011", func(t *testing.T) {
-		payload := createPayload("2011", "Plat1", "Prod1", "Model1", "IMEI1", "TID1", "SIM1")
-		reg, err := parseVehicleRegistration(payload, "2011")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if reg.PlatformID != "Plat1" {
-			t.Errorf("expected Plat1, got %s", reg.PlatformID)
-		}
-		if reg.TerminalModelType != "Model1" {
-			t.Errorf("expected Model1, got %s", reg.TerminalModelType)
-		}
-	})
-
-	t.Run("Version 2019", func(t *testing.T) {
-		payload := createPayload("2019", "Plat2", "Prod2", "Model2", "IMEI2", "TID2", "SIM2")
-		reg, err := parseVehicleRegistration(payload, "2019")
+	t.Run("Parse 2019 payload", func(t *testing.T) {
+		payload := createPayload("Plat2", "Prod2", "Model2", "IMEI2", "TID2", "SIM2")
+		reg, err := parseVehicleRegistration(payload)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -75,11 +54,10 @@ func TestParseVehicleRegistration(t *testing.T) {
 		}
 	})
 
-	t.Run("Version Mismatch (2011 payload with 2019 config)", func(t *testing.T) {
-		payload := createPayload("2011", "Plat1", "Prod1", "Model1", "IMEI1", "TID1", "SIM1")
-		_, err := parseVehicleRegistration(payload, "2019")
-		if err == nil {
-			t.Error("expected error, got nil")
+	t.Run("Payload too short", func(t *testing.T) {
+		payload := []byte{0x01, 0x02}
+		if _, err := parseVehicleRegistration(payload); err == nil {
+			t.Error("expected error for short payload")
 		}
 	})
 }

@@ -3,7 +3,7 @@ package jtt809
 import "testing"
 
 func TestBatchLocationUploadEncode2019(t *testing.T) {
-	pos := &VehiclePosition2019{
+	pos := &VehiclePosition{
 		Encrypt:     1,
 		GnssData:    nil,
 		PlatformID1: "11111111111",
@@ -17,8 +17,8 @@ func TestBatchLocationUploadEncode2019(t *testing.T) {
 		VehicleNo:    "粤B00001",
 		VehicleColor: VehicleColorYellow,
 		Locations: []BatchLocationRecord{
-			{Position2019: pos},
-			{Position2019: pos},
+			{Position: pos},
+			{Position: pos},
 		},
 	}
 	data, err := EncodePackage(Package{Header: Header{GNSSCenterID: 0x0fedcba}, Body: body})

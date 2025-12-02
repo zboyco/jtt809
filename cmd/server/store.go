@@ -44,8 +44,7 @@ type VehicleState struct {
 
 	Registration *VehicleRegistration
 
-	Position2011 *jtt809.VehiclePosition
-	Position2019 *jtt809.VehiclePosition2019
+	Position2019 *jtt809.VehiclePosition
 	PositionTime time.Time
 	BatchCount   int
 
@@ -91,16 +90,17 @@ type PlatformSnapshot struct {
 
 // VehicleSnapshot 为单车数据提供可序列化视图。
 type VehicleSnapshot struct {
-	VehicleNo    string                      `json:"vehicle_no"`
-	VehicleColor byte                        `json:"vehicle_color"`
-	Registration *VehicleRegistration        `json:"registration,omitempty"`
-	Position2011 *jtt809.VehiclePosition     `json:"location_2011,omitempty"`
-	Position2019 *jtt809.VehiclePosition2019 `json:"location_2019,omitempty"`
-	PositionTime time.Time                   `json:"location_time,omitempty"`
-	BatchCount   int                         `json:"batch_count,omitempty"`
-	LastVideoAck *VideoAckState              `json:"video_ack,omitempty"`
-	Monitored    bool                        `json:"monitored"`
-	MonitoredAt  time.Time                   `json:"monitored_at,omitempty"`
+	VehicleNo    string                  `json:"vehicle_no"`
+	VehicleColor byte                    `json:"vehicle_color"`
+	Registration *VehicleRegistration    `json:"registration,omitempty"`
+	Position     *jtt809.VehiclePosition `json:"location,omitempty"`
+	PositionTime time.Time               `json:"location_time,omitempty"`
+	Longitude    float64                 `json:"longitude,omitempty"`
+	Latitude     float64                 `json:"latitude,omitempty"`
+	BatchCount   int                     `json:"batch_count,omitempty"`
+	LastVideoAck *VideoAckState          `json:"video_ack,omitempty"`
+	Monitored    bool                    `json:"monitored"`
+	MonitoredAt  time.Time               `json:"monitored_at,omitempty"`
 }
 
 // NewPlatformStore 初始化状态存储。
@@ -195,21 +195,15 @@ func (s *PlatformStore) UpdateVehicleRegistration(userID uint32, color byte, veh
 	v.Registration = reg
 }
 
-// UpdateLocation 写入最新定位数据，兼容 2011 与 2019 载荷。
-func (s *PlatformStore) UpdateLocation(userID uint32, color byte, vehicle string, pos2011 *jtt809.VehiclePosition, pos2019 *jtt809.VehiclePosition2019, batchCount int) {
+// UpdateLocation 写入最新定位数据（2019 版）。
+func (s *PlatformStore) UpdateLocation(userID uint32, color byte, vehicle string, pos2019 *jtt809.VehiclePosition, batchCount int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	state := s.ensurePlatformLocked(userID)
 	v := state.ensureVehicleLocked(vehicleKey(vehicle, color), vehicle, color)
-	if pos2011 != nil {
-		cp := *pos2011
-		v.Position2011 = &cp
-		v.Position2019 = nil
-		v.PositionTime = cp.Time
-	} else if pos2019 != nil {
+	if pos2019 != nil {
 		cp := *pos2019
 		v.Position2019 = &cp
-		v.Position2011 = nil
 		v.PositionTime = time.Now()
 	}
 	if batchCount > 0 {
@@ -373,13 +367,13 @@ func (state *PlatformState) snapshotLocked() PlatformSnapshot {
 			cp := *v.Registration
 			vs.Registration = &cp
 		}
-		if v.Position2011 != nil {
-			cp := *v.Position2011
-			vs.Position2011 = &cp
-		}
 		if v.Position2019 != nil {
 			cp := *v.Position2019
-			vs.Position2019 = &cp
+			vs.Position = &cp
+			if lon, lat, ok := extractLonLat(cp.GnssData); ok {
+				vs.Longitude = lon
+				vs.Latitude = lat
+			}
 		}
 		if v.LastVideoAck != nil {
 			cp := *v.LastVideoAck

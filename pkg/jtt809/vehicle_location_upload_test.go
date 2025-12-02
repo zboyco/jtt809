@@ -3,60 +3,11 @@ package jtt809
 import (
 	"encoding/binary"
 	"testing"
-	"time"
 )
-
-func TestVehicleLocationUploadEncode(t *testing.T) {
-	pos := VehiclePosition{
-		Encrypt:     0,
-		Time:        time.Date(2024, 5, 12, 15, 4, 5, 0, time.UTC),
-		Lon:         116397000,
-		Lat:         39908000,
-		Speed:       60,
-		RecordSpeed: 61,
-		Mileage:     123456,
-		Direction:   180,
-		Altitude:    45,
-		State:       0x01,
-		Alarm:       0x02,
-	}
-	body := VehicleLocationUpload{
-		VehicleNo:    "京A12345",
-		VehicleColor: 1,
-		Position:     pos,
-	}
-	data, err := EncodePackage(Package{Header: Header{GNSSCenterID: 99}, Body: body})
-	if err != nil {
-		t.Fatalf("encode vehicle upload: %v", err)
-	}
-	frame, err := DecodeFrame(data)
-	if err != nil {
-		t.Fatalf("decode frame: %v", err)
-	}
-	if frame.BodyID != MsgIDDynamicInfo {
-		t.Fatalf("unexpected body id: %x", frame.BodyID)
-	}
-	raw := frame.RawBody
-	subType := binary.BigEndian.Uint16(raw[22:24])
-	if subType != 0x1202 {
-		t.Fatalf("unexpected sub type: %x", subType)
-	}
-	length := binary.BigEndian.Uint32(raw[24:28])
-	if length != 36 {
-		t.Fatalf("unexpected position length: %d", length)
-	}
-	position, err := ParseVehiclePosition(raw[28:])
-	if err != nil {
-		t.Fatalf("parse position: %v", err)
-	}
-	if position.Direction != pos.Direction || position.Lon != pos.Lon || position.Lat != pos.Lat {
-		t.Fatalf("position mismatch: %+v", position)
-	}
-}
 
 func TestVehicleLocationUploadEncode2019(t *testing.T) {
 	gnss := []byte{0x01, 0x02, 0x03, 0x04}
-	pos := &VehiclePosition2019{
+	pos := &VehiclePosition{
 		Encrypt:     1,
 		GnssData:    gnss,
 		PlatformID1: "11000000001",
@@ -100,14 +51,12 @@ func TestVehicleLocationUploadEncode2019(t *testing.T) {
 	}
 }
 
-func TestVehicleLocationValidate(t *testing.T) {
-	pos := VehiclePosition{
-		Time:      time.Now(),
-		Lon:       181000000,
-		Lat:       0,
-		Direction: 10,
+func TestVehicleLocationUploadRequirePosition2019(t *testing.T) {
+	body := VehicleLocationUpload{
+		VehicleNo:    "粤B00001",
+		VehicleColor: VehicleColorBlue,
 	}
-	if _, err := pos.encode(); err == nil {
-		t.Fatalf("expected lon validation error")
+	if _, err := body.Encode(); err == nil {
+		t.Fatalf("expected encode error when position is missing")
 	}
 }

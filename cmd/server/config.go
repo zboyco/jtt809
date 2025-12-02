@@ -24,7 +24,6 @@ type Account struct {
 	UserID     uint32
 	Password   string
 	VerifyCode uint32
-	Version    string // "2011" or "2019"
 }
 
 // parseConfig 解析命令行参数，返回标准化配置。
@@ -35,7 +34,7 @@ func parseConfig() (Config, error) {
 		idleSec   = flag.Int("idle", 300, "连接空闲超时时间，单位秒，<=0 表示不超时")
 		accountFS multiAccountFlag
 	)
-	flag.Var(&accountFS, "account", "下级平台账号，格式 userID:password:verifyCode[:version]，可重复指定")
+	flag.Var(&accountFS, "account", "下级平台账号，格式 userID:password:verifyCode，可重复指定")
 	flag.Parse()
 
 	cfg := Config{
@@ -55,7 +54,6 @@ func parseConfig() (Config, error) {
 			UserID:     10001,
 			Password:   "pass809",
 			VerifyCode: 0x13572468,
-			Version:    "2019",
 		})
 	}
 	cfg.Accounts = accountFS
@@ -84,7 +82,7 @@ type multiAccountFlag []Account
 func (m *multiAccountFlag) String() string {
 	parts := make([]string, 0, len(*m))
 	for _, acc := range *m {
-		parts = append(parts, fmt.Sprintf("%d:%s:%d:%s", acc.UserID, acc.Password, acc.VerifyCode, acc.Version))
+		parts = append(parts, fmt.Sprintf("%d:%s:%d", acc.UserID, acc.Password, acc.VerifyCode))
 	}
 	return strings.Join(parts, ",")
 }
@@ -92,7 +90,7 @@ func (m *multiAccountFlag) String() string {
 func (m *multiAccountFlag) Set(value string) error {
 	parts := strings.Split(value, ":")
 	if len(parts) < 3 || len(parts) > 4 {
-		return errors.New("account must be formatted as userID:password:verifyCode[:version]")
+		return errors.New("account must be formatted as userID:password:verifyCode")
 	}
 	userID, err := strconv.ParseUint(parts[0], 10, 32)
 	if err != nil {
@@ -106,13 +104,11 @@ func (m *multiAccountFlag) Set(value string) error {
 		UserID:     uint32(userID),
 		Password:   parts[1],
 		VerifyCode: uint32(verify),
-		Version:    "2019",
 	}
 	if len(parts) == 4 {
-		if parts[3] != "2011" && parts[3] != "2019" {
-			return fmt.Errorf("unsupported version %q, must be 2011 or 2019", parts[3])
+		if parts[3] != "2019" {
+			return fmt.Errorf("unsupported version %q, only 2019 is available", parts[3])
 		}
-		acc.Version = parts[3]
 	}
 	*m = append(*m, acc)
 	return nil

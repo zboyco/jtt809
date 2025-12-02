@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/binary"
 	"flag"
 	"fmt"
@@ -259,7 +260,7 @@ func NewGPSSimulator() *GPSSimulator {
 }
 
 // Next 生成下一个GPS位置数据
-func (g *GPSSimulator) Next() jtt809.VehiclePosition {
+func (g *GPSSimulator) Next() *jtt809.VehiclePosition {
 	// 模拟运动：根据速度和方向更新位置
 	// 简化计算：每次移动约0.0001度（约10米）
 	deltaLon := float64(g.speed) * 0.0001 * float64(cosTable[g.direction%360]) / 100
@@ -276,19 +277,39 @@ func (g *GPSSimulator) Next() jtt809.VehiclePosition {
 
 	g.mileage += uint32(g.speed) / 3600 // 粗略计算里程
 
-	return jtt809.VehiclePosition{
-		Encrypt:     0,
-		Time:        time.Now(),
-		Lon:         uint32(g.lon * 1000000), // 转换为1e-6度
-		Lat:         uint32(g.lat * 1000000),
-		Speed:       g.speed,
-		RecordSpeed: g.speed,
-		Mileage:     g.mileage,
-		Direction:   g.direction,
-		Altitude:    50, // 海拔50米
-		State:       0,  // 车辆状态
-		Alarm:       0,  // 无报警
+	return &jtt809.VehiclePosition{
+		Encrypt:  0,
+		GnssData: g.encodeGNSSPayload(),
 	}
+}
+
+// Coordinates 返回当前经纬度（十进制度数）
+func (g *GPSSimulator) Coordinates() (float64, float64) {
+	return g.lon, g.lat
+}
+
+func (g *GPSSimulator) encodeGNSSPayload() []byte {
+	var buf bytes.Buffer
+	buf.WriteByte(0) // Encrypt
+	now := time.Now()
+	buf.WriteByte(byte(now.Day()))
+	buf.WriteByte(byte(now.Month()))
+	_ = binary.Write(&buf, binary.BigEndian, uint16(now.Year()))
+	buf.WriteByte(byte(now.Hour()))
+	buf.WriteByte(byte(now.Minute()))
+	buf.WriteByte(byte(now.Second()))
+	lon := uint32(g.lon * 1000000)
+	lat := uint32(g.lat * 1000000)
+	_ = binary.Write(&buf, binary.BigEndian, lon)
+	_ = binary.Write(&buf, binary.BigEndian, lat)
+	_ = binary.Write(&buf, binary.BigEndian, g.speed)
+	_ = binary.Write(&buf, binary.BigEndian, g.speed)
+	_ = binary.Write(&buf, binary.BigEndian, g.mileage)
+	_ = binary.Write(&buf, binary.BigEndian, g.direction)
+	_ = binary.Write(&buf, binary.BigEndian, uint16(50)) // altitude
+	_ = binary.Write(&buf, binary.BigEndian, uint32(0))  // state
+	_ = binary.Write(&buf, binary.BigEndian, uint32(0))  // alarm
+	return buf.Bytes()
 }
 
 // 简化的三角函数表（cos和sin的整数近似值，乘以100）
@@ -619,8 +640,10 @@ func handleMonitorRequest(conn net.Conn, frame *jtt809.Frame) {
 	log.Printf("[Sub] Monitor %s ack sent: Result=Success", action)
 }
 
-var mainConn net.Conn
-var mainMsgSN *uint32
+var (
+	mainConn  net.Conn
+	mainMsgSN *uint32
+)
 
 func startGPSReporting(conn net.Conn) {
 	if gpsMonitored {
@@ -663,7 +686,7 @@ func sendGPSLocation(gps *GPSSimulator) {
 	upload := jtt809.VehicleLocationUpload{
 		VehicleNo:    *vehicleNo,
 		VehicleColor: byte(*vehicleColor),
-		Position:     position,
+		Position2019: position,
 	}
 	pkg, _ := jtt809.EncodePackage(jtt809.Package{
 		Header: jtt809.Header{
@@ -675,7 +698,8 @@ func sendGPSLocation(gps *GPSSimulator) {
 	})
 	*mainMsgSN++
 	mainConn.Write(pkg)
-	log.Printf("[GPS] Location sent: Lon=%.6f, Lat=%.6f", float64(position.Lon)/1e6, float64(position.Lat)/1e6)
+	lon, lat := gps.Coordinates()
+	log.Printf("[GPS] Location sent: Lon=%.6f, Lat=%.6f", lon, lat)
 }
 
 // sendLocationUpdates 定期发送GPS定位数据
@@ -692,7 +716,7 @@ func sendLocationUpdates(conn net.Conn, msgSN *uint32, interval time.Duration) {
 		upload := jtt809.VehicleLocationUpload{
 			VehicleNo:    *vehicleNo,
 			VehicleColor: byte(*vehicleColor),
-			Position:     position,
+			Position2019: position,
 		}
 
 		pkg, err := jtt809.EncodePackage(jtt809.Package{
@@ -709,8 +733,9 @@ func sendLocationUpdates(conn net.Conn, msgSN *uint32, interval time.Duration) {
 		}
 		*msgSN++
 
-		log.Printf("[Main] Sending Location: Lon=%.6f, Lat=%.6f, Speed=%dkm/h, Direction=%d°",
-			float64(position.Lon)/1000000.0, float64(position.Lat)/1000000.0, position.Speed, position.Direction)
+		lon, lat := gps.Coordinates()
+		log.Printf("[Main] Sending Location: Lon=%.6f, Lat=%.6f",
+			lon, lat)
 
 		if _, err := conn.Write(pkg); err != nil {
 			log.Printf("Send location update failed: %v", err)
