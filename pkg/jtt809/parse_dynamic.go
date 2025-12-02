@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-// LocationDynamic 封装从子业务 0x1202/0x1701 解析出的核心字段（2011 版定位格式）。
+// LocationDynamic 封装从子业务 0x1202 解析出的核心字段（2011 版定位格式）。
 type LocationDynamic struct {
 	Plate     string
 	Color     byte
@@ -23,12 +23,12 @@ type LocationDynamic struct {
 	Alarm     uint32
 }
 
-// ParseLocation2011 解析 0x1202/0x1701 载荷为 2011 版定位数据。
+// ParseLocation2011 解析 0x1202 载荷为 2011 版定位数据。
 func ParseLocation2011(pkt *SubBusinessPacket) (*LocationDynamic, error) {
 	if pkt == nil {
 		return nil, errors.New("nil packet")
 	}
-	if pkt.SubBusinessID != SubMsgRealLocation2011 && pkt.SubBusinessID != 0x1701 {
+	if pkt.SubBusinessID != SubMsgRealLocation2011 {
 		return nil, fmt.Errorf("unsupported sub business id: %x", pkt.SubBusinessID)
 	}
 	if len(pkt.Payload) < 36 {
@@ -94,7 +94,7 @@ func ParseBatchLocation(pkt *SubBusinessPacket) (*BatchLocationDynamic, error) {
 	}, nil
 }
 
-// DynamicInfo2019 表示 2019 版主链路车辆动态交互业务内容（0x1700/0x1701），保留原始子业务载荷。
+// DynamicInfo2019 表示 2019 版主链路车辆动态交互业务内容（0x1200），保留原始子业务载荷。
 type DynamicInfo2019 struct {
 	Plate         string
 	PlateRaw      []byte
@@ -104,7 +104,7 @@ type DynamicInfo2019 struct {
 	Payload       []byte
 }
 
-// ParseMainDynamic2019 解析主链路车辆动态类报文（如 0x1700/0x1701），返回子业务结构。
+// ParseMainDynamic2019 解析主链路车辆动态类报文（如 0x1200），返回子业务结构。
 func ParseMainDynamic2019(body []byte) (*DynamicInfo2019, error) {
 	pkt, err := ParseSubBusiness(body)
 	if err != nil {

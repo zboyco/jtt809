@@ -12,8 +12,11 @@ JT/T 809 下级平台模拟器用于测试上级平台服务器的功能，完�
 - ✅ 响应上级平台的从链路登录请求
 - ✅ 主链路心跳保活（每30秒）
 - ✅ 从链路心跳响应
+- ✅ 时效口令上报（JT/T 1078，登录后主动上报）
+- ✅ 时效口令请求应答（JT/T 1078，被动响应）
 - ✅ 车辆注册信息上报
 - ✅ GPS实时定位数据上报（可配置间隔）
+- ✅ 车辆定位信息交换请求应答（订阅/取消订阅GPS）
 - ✅ 实时视频请求应答（JT/T 1078）
 
 ---
@@ -97,6 +100,7 @@ sequenceDiagram
     Simulator->>Server: 返回从链路登录响应
 
     Note over Simulator: 4. 车辆数据上报
+    Simulator->>Server: 时效口令上报 (0x1700/0x1701)
     Simulator->>Server: 车辆注册信息 (0x1201)
 
     Note over Simulator,Server: 5. 保持连接
@@ -108,11 +112,18 @@ sequenceDiagram
     Server->>Simulator: 从链路心跳 (0x9005)
     Simulator->>Server: 心跳响应 (0x9006)
 
-    loop 每10秒
+    Note over Simulator,Server: 6. GPS订阅与上报
+    Server->>Simulator: 启动GPS订阅 (0x9200/0x9205)
+    Simulator->>Server: 订阅应答 (0x1200/0x1205)
+    loop 每5秒
         Simulator->>Server: GPS定位数据 (0x1202)
     end
+    Server->>Simulator: 结束GPS订阅 (0x9200/0x9206)
+    Simulator->>Server: 订阅应答 (0x1200/0x1206)
 
-    Note over Simulator,Server: 6. 视频请求应答
+    Note over Simulator,Server: 7. 视频请求应答
+    Server->>Simulator: 时效口令请求 (0x9700/0x1702)
+    Simulator->>Server: 时效口令上报 (0x1700/0x1701)
     Server->>Simulator: 实时视频请求 (0x9800/0x9801)
     Simulator->>Server: 视频请求应答 (0x1800/0x1801)
 ```
@@ -186,6 +197,7 @@ Heartbeat Response Received
 | `Sub Link listening on ...` | 从链路监听成功 |
 | `Connected to Main Link` | 主链路连接成功 |
 | `Login Response Received` | 收到主链路登录响应 |
+| `[Main] Sending Authorize Report` | 发送时效口令上报 (0x1700/0x1701) |
 | `Sending Vehicle Registration` | 发送车辆注册信息 |
 | `Starting GPS location updates` | 启动GPS定位上报 |
 | `Sending Location` | 发送GPS定位数据 |
@@ -195,9 +207,17 @@ Heartbeat Response Received
 | `Sub Link Login Request Received` | 收到从链路登录请求 |
 | `[Sub] Sent Login Response` | 已发送从链路登录响应 |
 | `Sub Link Heartbeat Received` | 收到从链路心跳 |
-| `[Main] Received Video Request` | 收到实时视频请求 |
+| `[Main] Authorize Request` | 收到时效口令请求 (0x9700/0x1702) |
+| `[Main] Sending Authorize Response` | 已发送时效口令应答 (0x1700/0x1701) |
+| `[Sub] Monitor startup request` | 收到GPS订阅请求 (0x9200/0x9205) |
+| `[Sub] Monitor startup ack sent` | 已发送GPS订阅应答 |
+| `[GPS] Starting GPS reporting` | 启动GPS上报（5秒间隔） |
+| `[GPS] Location sent` | 发送GPS定位数据 |
+| `[Sub] Monitor end request` | 收到GPS取消订阅请求 (0x9200/0x9206) |
+| `[GPS] Stopping GPS reporting` | 停止GPS上报 |
+| `[Main] Received Video Request` | 收到实时视频请求 (0x9800/0x9801) |
 | `[Main] Video Request` | 视频请求详情（车牌、通道等） |
-| `[Main] Video Response Sent` | 已发送视频请求应答 |
+| `[Main] Video Response Sent` | 已发送视频请求应答 (0x1800/0x1801) |
 
 ---
 
@@ -281,6 +301,8 @@ Heartbeat Response Received
 - `0x1200`: 车辆动态信息交换（上行）
   - `0x1201`: 上传车辆注册信息
   - `0x1202`: 实时上传车辆定位信息
+- `0x1700`: 视频鉴权（上行，JT/T 1078）
+  - `0x1701`: 时效口令上报消息（登录后主动上报）
 - `0x1800`: 实时音视频（上行）
   - `0x1801`: 实时音视频请求应答
 
@@ -289,5 +311,10 @@ Heartbeat Response Received
 - `0x9002`: 从链路连接应答
 - `0x9005`: 从链路心跳请求（被动响应）
 - `0x9006`: 从链路心跳应答
+- `0x9200`: 车辆动态信息交换（下行）
+  - `0x9205`: 启动车辆定位信息交换请求
+  - `0x9206`: 结束车辆定位信息交换请求
+- `0x9700`: 视频鉴权（下行，JT/T 1078）
+  - `0x1702`: 时效口令请求（被动响应）
 - `0x9800`: 实时音视频（下行）
   - `0x9801`: 实时音视频请求

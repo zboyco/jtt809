@@ -104,6 +104,24 @@ func (g *JT809Gateway) handleMonitorStartup(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, map[string]string{"status": "sent"})
 }
 
+// func (g *JT809Gateway) handleAuthorizeRequest(w http.ResponseWriter, r *http.Request) { // Removed
+// 	if r.Method != http.MethodPost {
+// 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+// 		return
+// 	}
+// 	defer r.Body.Close()
+// 	var req AuthorizeRequest
+// 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+// 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+// 		return
+// 	}
+// 	if err := g.RequestAuthorizeCode(req); err != nil {
+// 		http.Error(w, err.Error(), http.StatusBadRequest)
+// 		return
+// 	}
+// 	writeJSON(w, map[string]string{"status": "sent"})
+// }
+
 func (g *JT809Gateway) handleMonitorEnd(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

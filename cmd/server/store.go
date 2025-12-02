@@ -30,6 +30,10 @@ type PlatformState struct {
 	LastMainHeartbeat time.Time
 	LastSubHeartbeat  time.Time
 
+	// 视频鉴权相关（平台级别，不与具体车辆关联）
+	PlatformID string // 平台唯一编码
+	AuthCode   string // 时效口令
+
 	Vehicles map[string]*VehicleState
 }
 
@@ -80,6 +84,8 @@ type PlatformSnapshot struct {
 	Password      string            `json:"-"` // 不对外暴露
 	LastMainBeat  time.Time         `json:"last_main_heartbeat"`
 	LastSubBeat   time.Time         `json:"last_sub_heartbeat"`
+	PlatformID    string            `json:"platform_id,omitempty"` // 平台唯一编码
+	AuthCode      string            `json:"auth_code,omitempty"`   // 时效口令
 	Vehicles      []VehicleSnapshot `json:"vehicles"`
 }
 
@@ -224,6 +230,28 @@ func (s *PlatformStore) RecordVideoAck(userID uint32, color byte, vehicle string
 	v.LastVideoAck = ack
 }
 
+// UpdateAuthCode 存储平台的时效口令
+// 注意：根据 JT/T 809-2019 标准，0x1700 消息中的时效口令是平台级别的，
+// 不与具体车辆关联，因此存储在 PlatformState 中。
+func (s *PlatformStore) UpdateAuthCode(userID uint32, platformID string, authCode string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state := s.ensurePlatformLocked(userID)
+	state.PlatformID = platformID
+	state.AuthCode = authCode
+}
+
+// GetAuthCode 获取平台的时效口令
+func (s *PlatformStore) GetAuthCode(userID uint32) (platformID string, authCode string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	state, ok := s.platforms[userID]
+	if !ok {
+		return "", ""
+	}
+	return state.PlatformID, state.AuthCode
+}
+
 // Snapshot 返回指定 userID 的深拷贝视图。
 func (s *PlatformStore) Snapshot(userID uint32) (PlatformSnapshot, bool) {
 	s.mu.RLock()
@@ -328,6 +356,8 @@ func (state *PlatformState) snapshotLocked() PlatformSnapshot {
 		Password:      state.Password,
 		LastMainBeat:  state.LastMainHeartbeat,
 		LastSubBeat:   state.LastSubHeartbeat,
+		PlatformID:    state.PlatformID,
+		AuthCode:      state.AuthCode,
 		Vehicles:      make([]VehicleSnapshot, 0, len(state.Vehicles)),
 	}
 	for _, v := range state.Vehicles {

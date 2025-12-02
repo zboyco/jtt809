@@ -16,7 +16,6 @@ const (
 	SubMsgUploadVehicleReg uint16 = 0x1201 // 上传车辆注册信息
 	SubMsgWarnSuperviseReq uint16 = 0x9401 // 报警督办请求
 	SubMsgPlatformQueryAck uint16 = 0x1301 // 平台查岗应答
-	SubMsgTimeTokenReport  uint16 = 0x1701 // 时效口令上报
 
 	// 下行子业务 (上级平台->下级平台)
 	SubMsgApplyForMonitorStartup uint16 = 0x9205 // 启动车辆定位信息交换请求
@@ -27,19 +26,21 @@ const (
 	SubMsgApplyForMonitorEndAck     uint16 = 0x1206 // 结束车辆定位信息交换应答
 
 	// JT/T 1078 子业务
-	SubMsgAuthorizeStartupReq         uint16 = 0x1701 // 视频终端鉴权/启动信息上报 (UP_AUTHORIZE_MSG_STARTUP_REQ)
-	SubMsgRealTimeVideoStartupAck     uint16 = 0x1801 // 实时音视频请求应答 (UP_REAL_VIDEO_MSG_STARTUP_ACK)
-	SubMsgDownRealTimeVideoStartupReq uint16 = 0x9801 // 实时音视频请求 (DOWN_REAL_VIDEO_MSG_STARTUP_REQ)
+	SubMsgAuthorizeStartupReq         uint16 = 0x1701 // 时效口令上报消息 (UP_AUTHORIZE_MSG_STARTUP)
+	SubMsgAuthorizeStartupReqMsg      uint16 = 0x1702 // 时效口令请求 (UP_AUTHORIZE_MSG_STARTUP_REQ)
+	SubMsgAuthorizeStartupReqAck      uint16 = 0x9702 // 时效口令请求应答 (DOWN_AUTHORIZE_MSG_STARTUP_REQ_ACK)
+	SubMsgRealTimeVideoStartupAck     uint16 = 0x1801 // 实时音视频请求应答消息 (UP_REALVIDEO_MSG_STARTUP_ACK)
+	SubMsgDownRealTimeVideoStartupReq uint16 = 0x9801 // 实时音视频请求消息 (DOWN_REALVIDEO_MSG_STARTUP)
 )
 
 // MonitorReasonCode 启动/结束车辆定位信息交换请求原因
 type MonitorReasonCode byte
 
 const (
-	MonitorReasonEnterArea   MonitorReasonCode = 0x00 // 车辆进入指定区域
-	MonitorReasonManual      MonitorReasonCode = 0x01 // 人工指定交换
-	MonitorReasonEmergency   MonitorReasonCode = 0x02 // 应急状态下车辆定位信息回传
-	MonitorReasonOther       MonitorReasonCode = 0x03 // 其它原因
+	MonitorReasonEnterArea MonitorReasonCode = 0x00 // 车辆进入指定区域
+	MonitorReasonManual    MonitorReasonCode = 0x01 // 人工指定交换
+	MonitorReasonEmergency MonitorReasonCode = 0x02 // 应急状态下车辆定位信息回传
+	MonitorReasonOther     MonitorReasonCode = 0x03 // 其它原因
 )
 
 // WarnSrc 表示报警信息来源。

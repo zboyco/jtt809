@@ -116,6 +116,8 @@ func (g *JT809Gateway) handleMainMessage(session *goserver.AppSession, payload [
 		g.handleDisconnectInform(session, frame)
 	case jtt809.MsgIDRealTimeVideo:
 		g.handleRealTimeVideo(session, frame)
+	case jtt809.MsgIDAuthorize:
+		g.handleAuthorize(session, frame)
 	default:
 		slog.Debug("unhandled main message", "session", session.ID, "msg_id", fmt.Sprintf("0x%04X", frame.BodyID))
 	}
@@ -340,7 +342,8 @@ func (g *JT809Gateway) keepAliveSubLink(c *client.SimpleClient, userID uint32) {
 	for range ticker.C {
 		hb, _ := jtt809.BuildSubLinkHeartbeat(jtt809.Header{
 			MsgSN:   0, // TODO: maintain SN
-			Version: jtt809.Version{Major: 1, Minor: 0, Patch: 0},
+			Version: jtt809.Version{Major: 1, Minor: 2, Patch: 19},
+			WithUTC: true,
 		})
 		g.logPacket("sub", "send", fmt.Sprintf("%d", userID), hb)
 		if err := c.Send(hb); err != nil {
@@ -456,20 +459,11 @@ func (g *JT809Gateway) handleDynamicInfo(session *goserver.AppSession, frame *jt
 			reader = reader[step:]
 		}
 		slog.Info("batch location", "user_id", user, "plate", pkt.Plate, "count", count)
-	case pkt.SubBusinessID == jtt809.SubMsgTimeTokenReport:
-		token, err := jtt809.ParseTimeTokenReport(pkt.Payload)
-		if err != nil {
-			slog.Warn("parse token report failed", "session", session.ID, "err", err)
-			return
-		}
-		slog.Info("time token report", "user_id", user, "plate", pkt.Plate, "platform", token.PlatformID)
+	// 注意：0x1701 (时效口令上报) 应该通过 0x1700 (视频鉴权) 主业务类型传输，
+	// 而不是通过 0x1200 (动态信息)。根据 JT/T 809 标准，视频相关消息应使用专门的 0x1700。
+	// 如果收到 0x1200 中的 0x1701，记录警告但不处理。
 	case pkt.SubBusinessID == jtt809.SubMsgAuthorizeStartupReq:
-		req, err := jt1078.ParseAuthorizeStartupReq(pkt.Payload)
-		if err != nil {
-			slog.Warn("parse authorize request failed", "session", session.ID, "err", err)
-			return
-		}
-		slog.Info("video authorize report", "user_id", user, "platform", req.PlatformID)
+		slog.Warn("received 0x1701 in 0x1200, should use 0x1700 instead", "user_id", user, "plate", pkt.Plate)
 	case pkt.SubBusinessID == jtt809.SubMsgRealTimeVideoStartupAck:
 		ack, err := jt1078.ParseRealTimeVideoStartupAck(pkt.Payload)
 		if err != nil {
@@ -524,12 +518,8 @@ func (g *JT809Gateway) handlePlatformInfo(session *goserver.AppSession, frame *j
 }
 
 func (g *JT809Gateway) handleAlarmInteract(session *goserver.AppSession, frame *jtt809.Frame) {
-	pkt, err := jtt809.ParseSubBusiness(frame.RawBody)
-	if err != nil {
-		slog.Warn("parse alarm interact failed", "session", session.ID, "err", err)
-		return
-	}
-	slog.Info("alarm interact", "plate", pkt.Plate, "sub_id", fmt.Sprintf("0x%04X", pkt.SubBusinessID))
+	// 忽略主链路 0x1400 上报的报警数据，不用解析
+	slog.Debug("ignored alarm interact message", "session", session.ID, "msg_id", fmt.Sprintf("0x%04X", frame.BodyID))
 }
 
 func (g *JT809Gateway) handleDisconnectInform(session *goserver.AppSession, frame *jtt809.Frame) {
@@ -680,4 +670,67 @@ func parseVehicleRegistration(payload []byte, version string) (*VehicleRegistrat
 		TerminalID:        terminalID,
 		TerminalSIM:       sim,
 	}, nil
+}
+
+func (g *JT809Gateway) handleAuthorize(session *goserver.AppSession, frame *jtt809.Frame) {
+	user, ok := g.sessionUser(session)
+	if !ok {
+		slog.Warn("authorize msg before login", "session", session.ID)
+		return
+	}
+	// 0x1700 消息体结构：子业务ID(2字节) + 载荷
+	// 注意：不包含车牌号和颜色，与 0x1200 的 SubBusinessPacket 格式不同
+	msg, err := jt1078.ParseAuthorizeMsg(frame.RawBody)
+	if err != nil {
+		slog.Warn("parse authorize msg failed", "session", session.ID, "err", err)
+		return
+	}
+	switch msg.SubBusinessID {
+	case jtt809.SubMsgAuthorizeStartupReq: // 0x1701
+		req, err := jt1078.ParseAuthorizeStartupReq(msg.Payload)
+		if err != nil {
+			slog.Warn("parse authorize startup req failed", "session", session.ID, "err", err)
+			return
+		}
+		authCode := req.AuthorizeCode1
+		// 注意：0x1700 消息中没有车牌号和颜色信息，时效口令是平台级别的
+		g.store.UpdateAuthCode(user, req.PlatformID, authCode)
+		slog.Info("video authorize report (0x1701)", "user_id", user, "platform", req.PlatformID, "auth_code", authCode)
+
+	case jtt809.SubMsgAuthorizeStartupReqMsg: // 0x1702
+		slog.Info("video authorize request (0x1702)", "user_id", user)
+
+		downMsg := jt1078.DownAuthorizeMsg{
+			SubBusinessID: jtt809.SubMsgAuthorizeStartupReqAck, // 0x9702
+			Payload:       []byte{},
+		}
+
+		encodedBody, err := downMsg.Encode()
+		if err != nil {
+			slog.Error("encode down authorize msg failed", "err", err)
+			return
+		}
+
+		respPkg := jtt809.Package{
+			Header: frame.Header.WithResponse(jtt809.MsgIDDownAuthorize), // 0x9700
+			Body: rawBody{
+				msgID:   jtt809.MsgIDDownAuthorize,
+				payload: encodedBody,
+			},
+		}
+
+		data, err := jtt809.EncodePackage(respPkg)
+		if err != nil {
+			slog.Error("encode package failed", "err", err)
+			return
+		}
+
+		if err := session.Send(data); err != nil {
+			slog.Error("send authorize ack failed", "err", err)
+		}
+		slog.Info("sent authorize ack (0x9702)", "user_id", user)
+
+	default:
+		slog.Debug("unhandled authorize sub msg", "sub_id", fmt.Sprintf("0x%04X", msg.SubBusinessID))
+	}
 }

@@ -15,13 +15,12 @@ import (
 
 // VideoRequest 表示向下级平台下发的实时音视频请求。
 type VideoRequest struct {
-	UserID        uint32 `json:"user_id"`
-	VehicleNo     string `json:"vehicle_no"`
-	VehicleColor  byte   `json:"vehicle_color"`
-	ChannelID     byte   `json:"channel_id"`
-	AVItemType    byte   `json:"av_item_type"`
-	AuthorizeCode string `json:"authorize_code"`
-	GnssHex       string `json:"gnss_hex,omitempty"`
+	UserID       uint32 `json:"user_id"`
+	VehicleNo    string `json:"vehicle_no"`
+	VehicleColor byte   `json:"vehicle_color"`
+	ChannelID    byte   `json:"channel_id"`
+	AVItemType   byte   `json:"av_item_type"`
+	GnssHex      string `json:"gnss_hex,omitempty"`
 }
 
 // MonitorRequest 表示车辆定位信息交换请求（订阅/取消订阅车辆GPS）。
@@ -37,8 +36,12 @@ func (g *JT809Gateway) RequestVideoStream(req VideoRequest) error {
 	if req.VehicleNo == "" {
 		return errors.New("vehicle_no is required")
 	}
-	if req.AuthorizeCode == "" {
-		return errors.New("authorize_code is required")
+	if req.VehicleColor == 0 {
+		req.VehicleColor = jtt809.VehicleColorBlue
+	}
+	_, authCode := g.store.GetAuthCode(req.UserID)
+	if authCode == "" {
+		return fmt.Errorf("authorize_code not found in store for platform %d. Please wait for the platform to report the authorize code after login", req.UserID)
 	}
 	snap, ok := g.store.Snapshot(req.UserID)
 	if !ok {
@@ -64,7 +67,7 @@ func (g *JT809Gateway) RequestVideoStream(req VideoRequest) error {
 	body := jt1078.DownRealTimeVideoStartupReq{
 		ChannelID:     req.ChannelID,
 		AVItemType:    req.AVItemType,
-		AuthorizeCode: req.AuthorizeCode,
+		AuthorizeCode: authCode,
 		GnssData:      gnssData,
 	}
 	payload, err := body.Encode()

@@ -97,6 +97,7 @@ func main() {
 			log.Println("Login Response Received")
 			if !loginSuccess {
 				loginSuccess = true
+				go sendAuthorizeReport(conn, &msgSN)
 				go sendVehicleRegistration(conn, &msgSN)
 				if *locationSec > 0 {
 					go sendLocationUpdates(conn, &msgSN, time.Duration(*locationSec)*time.Second)
@@ -104,6 +105,9 @@ func main() {
 			}
 		case jtt809.MsgIDHeartbeatResponse:
 			log.Println("Heartbeat Response Received")
+		case jtt809.MsgIDDownAuthorize:
+			log.Println("[Main] Received Authorize Request (0x9700)")
+			handleAuthorizeRequest(conn, frame, &msgSN)
 		case jtt809.MsgIDDownRealTimeVideo:
 			log.Println("[Main] Received Video Request (0x9800)")
 			handleVideoRequest(conn, frame, &msgSN)
@@ -330,7 +334,51 @@ var sinTable = [360]int16{
 	89, 87, 85, 82, 80, 77, 74, 71, 68, 64, 61, 57, 54, 50, 46, 42, 38, 34, 30, 26,
 }
 
-// sendVehicleRegistration 发送车辆注册信息
+// sendAuthorizeReport 发送时效口令上报消息 (0x1700 + 0x1701)
+// 注意：0x1700 消息不包含车牌号和颜色信息，时效口令是平台级别的
+func sendAuthorizeReport(conn net.Conn, msgSN *uint32) {
+	time.Sleep(1 * time.Second)
+
+	// 构建 JT/T 1078 时效口令数据
+	req := jt1078.AuthorizeStartupReq{
+		PlatformID:     "Platform01",
+		AuthorizeCode1: "AuthCode123",
+		AuthorizeCode2: "AuthCode456",
+	}
+
+	// 编码时效口令数据
+	payload, err := req.Encode()
+	if err != nil {
+		log.Printf("Encode authorize request failed: %v", err)
+		return
+	}
+
+	// 封装为 0x1700 消息体
+	msg := jt1078.AuthorizeMsg{
+		SubBusinessID: jtt809.SubMsgAuthorizeStartupReq, // 0x1701
+		Payload:       payload,
+	}
+
+	pkg, err := jtt809.EncodePackage(jtt809.Package{
+		Header: jtt809.Header{
+			MsgSN:        *msgSN,
+			BusinessType: jtt809.MsgIDAuthorize, // 0x1700
+			Version:      jtt809.Version{Major: 1, Minor: 0, Patch: 0},
+		},
+		Body: msg,
+	})
+	if err != nil {
+		log.Printf("Build authorize report failed: %v", err)
+		return
+	}
+	*msgSN++
+
+	log.Printf("[Main] Sending Authorize Report (0x1700+0x1701): Platform=%s, AuthCode1=%s", req.PlatformID, req.AuthorizeCode1)
+	if _, err := conn.Write(pkg); err != nil {
+		log.Printf("Send authorize report failed: %v", err)
+	}
+}
+
 func sendVehicleRegistration(conn net.Conn, msgSN *uint32) {
 	time.Sleep(2 * time.Second) // 等待2秒后发送注册信息
 
@@ -362,6 +410,61 @@ func sendVehicleRegistration(conn net.Conn, msgSN *uint32) {
 	log.Printf("[Main] Sending Vehicle Registration: Vehicle=%s, Color=%d", *vehicleNo, *vehicleColor)
 	if _, err := conn.Write(pkg); err != nil {
 		log.Printf("Send vehicle registration failed: %v", err)
+	}
+}
+
+// handleAuthorizeRequest 处理上级平台的时效口令请求 (0x9700)
+// 注意：0x9700 消息不包含车牌号和颜色信息，时效口令是平台级别的
+func handleAuthorizeRequest(conn net.Conn, frame *jtt809.Frame, msgSN *uint32) {
+	// 解析 0x9700 消息体
+	msg, err := jt1078.ParseAuthorizeMsg(frame.RawBody)
+	if err != nil {
+		log.Printf("[Main] Parse authorize msg failed: %v", err)
+		return
+	}
+
+	// 检查子业务ID
+	if msg.SubBusinessID == jtt809.SubMsgAuthorizeStartupReqMsg { // 0x1702 时效口令请求
+		log.Printf("[Main] Authorize Request (0x9700+0x1702) received")
+
+		// 构建时效口令上报数据 (0x1700 + 0x1701)
+		req := jt1078.AuthorizeStartupReq{
+			PlatformID:     "Platform01",
+			AuthorizeCode1: "AuthCode123",
+			AuthorizeCode2: "AuthCode456",
+		}
+
+		payload, err := req.Encode()
+		if err != nil {
+			log.Printf("Encode authorize request failed: %v", err)
+			return
+		}
+
+		respMsg := jt1078.AuthorizeMsg{
+			SubBusinessID: jtt809.SubMsgAuthorizeStartupReq, // 0x1701
+			Payload:       payload,
+		}
+
+		pkg, err := jtt809.EncodePackage(jtt809.Package{
+			Header: jtt809.Header{
+				MsgSN:        *msgSN,
+				BusinessType: jtt809.MsgIDAuthorize, // 0x1700
+				Version:      jtt809.Version{Major: 1, Minor: 0, Patch: 0},
+			},
+			Body: respMsg,
+		})
+		if err != nil {
+			log.Printf("Build authorize response failed: %v", err)
+			return
+		}
+		*msgSN++
+
+		log.Printf("[Main] Sending Authorize Response (0x1700+0x1701): Platform=%s", req.PlatformID)
+		if _, err := conn.Write(pkg); err != nil {
+			log.Printf("Send authorize response failed: %v", err)
+		}
+	} else {
+		log.Printf("[Main] Unknown authorize sub business: 0x%04X", msg.SubBusinessID)
 	}
 }
 

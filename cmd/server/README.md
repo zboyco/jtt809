@@ -183,7 +183,6 @@ curl -X POST http://localhost:18080/api/video/request \
     "vehicle_color": 2,
     "channel_id": 1,
     "av_item_type": 0,
-    "authorize_code": "AuthCode123",
     "gnss_hex": ""
   }'
 ```
@@ -196,7 +195,6 @@ curl -X POST http://localhost:18080/api/video/request \
 | `vehicle_color` | uint8 | 否 | 车牌颜色（默认2-蓝色） |
 | `channel_id` | uint8 | 否 | 通道ID（默认1） |
 | `av_item_type` | uint8 | 是 | 音视频类型：0-音视频，1-视频，2-双向对讲，3-监听，4-中心广播，5-透传 |
-| `authorize_code` | string | 是 | 授权码 |
 | `gnss_hex` | string | 否 | GNSS数据（Hex编码，36字节） |
 
 **车牌颜色枚举**:

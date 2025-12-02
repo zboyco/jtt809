@@ -7,8 +7,16 @@ import (
 	"github.com/zboyco/jtt809/pkg/jtt809"
 )
 
-// AuthorizeStartupReq 对应 UP_AUTHORIZE_MSG_STARTUP_REQ (0x1701)
-// 视频终端鉴权/启动信息上报
+// AuthorizeStartupReq 对应 UP_AUTHORIZE_MSG_STARTUP (0x1701)
+// 时效口令上报消息（JT/T 1078 数据层）
+//
+// 此结构体定义了 JT/T 1078-2016 标准中时效口令的数据格式。
+// 在 JT/T 809 平台间传输时，需要封装在 AuthorizeMsg (0x1700) 中。
+//
+// 数据格式（共139字节）：
+//   - PLATFORM_ID: 11字节，企业视频监控平台唯一编码
+//   - AUTHORIZE_CODE_1: 64字节，归属地区政府平台使用的时效口令
+//   - AUTHORIZE_CODE_2: 64字节，跨域地区政府平台使用的时效口令
 type AuthorizeStartupReq struct {
 	PlatformID     string // 11 bytes
 	AuthorizeCode1 string // 64 bytes
