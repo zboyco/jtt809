@@ -9,11 +9,11 @@ import (
 // 覆盖主链路登录请求处理：解析登录请求并通过鉴权回调生成应答。
 func TestMainLinkHandleLoginRequest(t *testing.T) {
 	req := LoginRequest{
-		UserID:          10001,
-		Password:        "123456",
-		DownLinkIP:      "127.0.0.1",
-		DownLinkPort:    8080,
-		ProtocolVersion: [3]byte{1, 0, 0},
+		UserID:       10001,
+		Password:     "123456",
+		GnssCenterID: 0x13572468,
+		DownLinkIP:   "127.0.0.1",
+		DownLinkPort: 8080,
 	}
 	packet, err := EncodePackage(Package{Header: Header{}, Body: req})
 	if err != nil {
@@ -23,7 +23,7 @@ func TestMainLinkHandleLoginRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode frame: %v", err)
 	}
-	auth := SimpleAuthValidator(req.UserID, req.Password, 0x13572468)
+	auth := SimpleAuthValidator(req.UserID, req.Password, req.GnssCenterID, 0x13572468)
 	respPkg, err := GenerateResponse(frame, auth)
 	if err != nil {
 		t.Fatalf("generate login response: %v", err)
@@ -82,7 +82,7 @@ func TestMainLinkHandleRealTimeLocation(t *testing.T) {
 		VehicleColor: VehicleColorBlue,
 		Position:     pos,
 	}
-	pkt, err := EncodePackage(Package{Header: Header{GNSSCenterID: 99, WithUTC: true}, Body: body})
+	pkt, err := EncodePackage(Package{Header: Header{GNSSCenterID: 99}, Body: body})
 	if err != nil {
 		t.Fatalf("encode location upload: %v", err)
 	}

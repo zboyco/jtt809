@@ -4,7 +4,7 @@ import "testing"
 
 func TestSubLinkLoginEncodeDecode(t *testing.T) {
 	header := Header{GNSSCenterID: 9}
-	req := SubLinkLoginRequest{UserID: 77, Password: "pwd"}
+	req := SubLinkLoginRequest{VerifyCode: 0x55667788}
 	data, err := BuildSubLinkLoginPackage(header, req)
 	if err != nil {
 		t.Fatalf("encode sub link login: %v", err)
@@ -20,7 +20,7 @@ func TestSubLinkLoginEncodeDecode(t *testing.T) {
 
 func TestSubLinkAutoResponse(t *testing.T) {
 	// login response
-	req := SubLinkLoginRequest{UserID: 1, Password: "pwd"}
+	req := SubLinkLoginRequest{VerifyCode: 0x01020304}
 	data, _ := EncodePackage(Package{Header: Header{GNSSCenterID: 2}, Body: req})
 	frame, _ := DecodeFrame(data)
 	respPkg, err := GenerateResponse(frame, nil)

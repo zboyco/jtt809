@@ -82,7 +82,6 @@ func (g *JT809Gateway) RequestVideoStream(req VideoRequest) error {
 		Header: jtt809.Header{
 			GNSSCenterID: snap.GNSSCenterID,
 			BusinessType: jtt809.MsgIDDownRealTimeVideo,
-			WithUTC:      true,
 		},
 		Body: rawBody{
 			msgID:   jtt809.MsgIDDownRealTimeVideo,
@@ -171,7 +170,6 @@ func (g *JT809Gateway) sendMonitorRequest(req MonitorRequest, startup bool) erro
 	msg := jtt809.Package{
 		Header: jtt809.Header{
 			GNSSCenterID: state.GNSSCenterID,
-			WithUTC:      true,
 		},
 		Body: body,
 	}

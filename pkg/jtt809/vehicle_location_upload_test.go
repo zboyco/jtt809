@@ -23,7 +23,7 @@ func TestVehicleLocationUploadEncode(t *testing.T) {
 		Position:     pos,
 	}
 	data, err := EncodePackage(Package{
-		Header: Header{GNSSCenterID: 88, WithUTC: true},
+		Header: Header{GNSSCenterID: 88},
 		Body:   body,
 	})
 	if err != nil {
@@ -33,9 +33,7 @@ func TestVehicleLocationUploadEncode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode frame: %v", err)
 	}
-	if !frame.Header.WithUTC {
-		t.Fatalf("expected UTC header")
-	}
+
 	raw := frame.RawBody
 	length := binary.BigEndian.Uint32(raw[24:28])
 	const expectedLen = 54

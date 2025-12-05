@@ -33,6 +33,9 @@ func NewJT809Gateway(cfg Config) (*JT809Gateway, error) {
 	if len(cfg.Accounts) == 0 {
 		return nil, errors.New("at least one account is required")
 	}
+
+	printStartupInfo(cfg)
+
 	return &JT809Gateway{
 		cfg:   cfg,
 		auth:  NewAuthenticator(cfg.Accounts),
@@ -120,7 +123,7 @@ func (g *JT809Gateway) handleMainMessage(session *goserver.AppSession, payload [
 	case jtt809.MsgIDAuthorize:
 		g.handleAuthorize(session, frame)
 	default:
-		slog.Debug("unhandled main message", "session", session.ID, "msg_id", fmt.Sprintf("0x%04X", frame.BodyID))
+		slog.Warn("unhandled main message", "session", session.ID, "msg_id", fmt.Sprintf("0x%04X", frame.BodyID))
 	}
 	return nil, nil
 }
@@ -160,17 +163,14 @@ func (g *JT809Gateway) handleMainLogin(session *goserver.AppSession, frame *jtt8
 	if resp.Result == jtt809.LoginOK {
 		session.SetAttr("userID", req.UserID)
 		session.SetAttr("link", "main")
-		g.store.BindMainSession(session.ID, req, acc.Password)
-		if _, err := session.GetAttr("verifyCode"); err != nil {
-			session.SetAttr("verifyCode", acc.VerifyCode)
-		}
+		g.store.BindMainSession(session.ID, req, acc.GnssCenterID, resp.VerifyCode)
 		// Start Sub Link Connection
-		go g.connectSubLinkWithRetry(req.DownLinkIP, req.DownLinkPort, req.UserID, acc.Password)
+		go g.connectSubLinkWithRetry(req.UserID)
 	}
 	return g.simpleResponse(session, "main", frame, resp)
 }
 
-func (g *JT809Gateway) connectSubLinkWithRetry(ip string, port uint16, userID uint32, password string) {
+func (g *JT809Gateway) connectSubLinkWithRetry(userID uint32) {
 	// 设置重连标志，如果已经在重连则直接返回
 	if !g.store.SetReconnecting(userID, true) {
 		slog.Info("sub link already reconnecting, skip", "user_id", userID)
@@ -186,7 +186,12 @@ func (g *JT809Gateway) connectSubLinkWithRetry(ip string, port uint16, userID ui
 			return
 		}
 
-		if g.connectSubLink(ip, port, userID, password) {
+		if snap.DownLinkIP == "" || snap.DownLinkPort == 0 {
+			slog.Warn("missing sub link address, stop reconnecting", "user_id", userID, "ip", snap.DownLinkIP, "port", snap.DownLinkPort)
+			return
+		}
+
+		if g.connectSubLink(snap.DownLinkIP, snap.DownLinkPort, userID, snap.GNSSCenterID, snap.VerifyCode) {
 			return
 		}
 		time.Sleep(30 * time.Second)
@@ -194,7 +199,7 @@ func (g *JT809Gateway) connectSubLinkWithRetry(ip string, port uint16, userID ui
 	}
 }
 
-func (g *JT809Gateway) connectSubLink(ip string, port uint16, userID uint32, password string) bool {
+func (g *JT809Gateway) connectSubLink(ip string, port uint16, userID uint32, gnssCenterID uint32, verifyCode uint32) bool {
 	slog.Info("connecting sub link", "ip", ip, "port", port, "user_id", userID)
 
 	c := client.NewSimpleClient(goserver.TCP, ip, int(port))
@@ -211,13 +216,13 @@ func (g *JT809Gateway) connectSubLink(ip string, port uint16, userID uint32, pas
 	}
 
 	// Send Login
-	req := jtt809.SubLinkLoginRequest{UserID: userID, Password: password}
+	req := jtt809.SubLinkLoginRequest{VerifyCode: verifyCode}
 	pkg, _ := jtt809.BuildSubLinkLoginPackage(jtt809.Header{
 		MsgLength:    0, // auto
 		MsgSN:        1,
 		BusinessType: jtt809.MsgIDDownlinkConnReq,
-		GNSSCenterID: 0, // TODO: correct GNSS ID
-		Version:      jtt809.Version{Major: 1, Minor: 0, Patch: 0},
+		GNSSCenterID: gnssCenterID,
+		Version:      jtt809.Version{Major: 1, Minor: 2, Patch: 15},
 		EncryptFlag:  0,
 		EncryptKey:   0,
 	}, req)
@@ -273,12 +278,12 @@ func (g *JT809Gateway) connectSubLink(ip string, port uint16, userID uint32, pas
 
 	g.store.BindSubSession(userID, c)
 
-	go g.readSubLinkLoop(c, userID, true)
+	go g.readSubLinkLoop(c, userID, gnssCenterID, verifyCode, true)
 	go g.keepAliveSubLink(c, userID)
 	return true
 }
 
-func (g *JT809Gateway) readSubLinkLoop(c *client.SimpleClient, userID uint32, shouldReconnect bool) {
+func (g *JT809Gateway) readSubLinkLoop(c *client.SimpleClient, userID uint32, gnssCenterID uint32, verifyCode uint32, shouldReconnect bool) {
 	defer func() {
 		c.Close()
 		g.store.ClearSubConn(userID)
@@ -306,7 +311,7 @@ func (g *JT809Gateway) reconnectSubLink(userID uint32) {
 		return
 	}
 	slog.Info("attempting sub link reconnect", "user_id", userID)
-	g.connectSubLinkWithRetry(snap.DownLinkIP, snap.DownLinkPort, userID, snap.Password)
+	g.connectSubLinkWithRetry(userID)
 }
 
 func (g *JT809Gateway) healthCheckLoop(ctx context.Context) {
@@ -331,7 +336,7 @@ func (g *JT809Gateway) checkConnections() {
 		// 检查从链路是否需要重连
 		if !snap.SubConnected && snap.DownLinkIP != "" && snap.DownLinkPort > 0 {
 			slog.Warn("sub link disconnected, triggering reconnect", "user_id", snap.UserID)
-			go g.connectSubLinkWithRetry(snap.DownLinkIP, snap.DownLinkPort, snap.UserID, snap.Password)
+			go g.connectSubLinkWithRetry(snap.UserID)
 		}
 	}
 	// 检查车辆定位状态
@@ -344,8 +349,7 @@ func (g *JT809Gateway) keepAliveSubLink(c *client.SimpleClient, userID uint32) {
 	for range ticker.C {
 		hb, _ := jtt809.BuildSubLinkHeartbeat(jtt809.Header{
 			MsgSN:   0, // TODO: maintain SN
-			Version: jtt809.Version{Major: 1, Minor: 2, Patch: 19},
-			WithUTC: true,
+			Version: jtt809.Version{Major: 1, Minor: 2, Patch: 15},
 		})
 		g.logPacket("sub", "send", fmt.Sprintf("%d", userID), hb)
 		if err := c.Send(hb); err != nil {
@@ -635,10 +639,10 @@ func (g *JT809Gateway) handleAuthorize(session *goserver.AppSession, frame *jtt8
 		authCode := req.AuthorizeCode1
 		// 注意：0x1700 消息中没有车牌号和颜色信息，时效口令是平台级别的
 		g.store.UpdateAuthCode(user, req.PlatformID, authCode)
-		slog.Info("video authorize report (0x1701)", "user_id", user, "platform", req.PlatformID, "auth_code", authCode)
+		slog.Info("video authorize report", "user_id", user, "platform", req.PlatformID, "auth_code", authCode)
 
 	case jtt809.SubMsgAuthorizeStartupReqMsg: // 0x1702
-		slog.Info("video authorize request (0x1702)", "user_id", user)
+		slog.Info("video authorize request", "user_id", user)
 
 		downMsg := jt1078.DownAuthorizeMsg{
 			SubBusinessID: jtt809.SubMsgAuthorizeStartupReqAck, // 0x9702

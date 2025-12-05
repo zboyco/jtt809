@@ -22,8 +22,6 @@ func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	slog.SetDefault(logger)
 
-	server.PrintStartupInfo(cfg)
-
 	gateway, err := server.NewJT809Gateway(cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "init gateway: %v\n", err)
@@ -46,7 +44,7 @@ func parseConfig() (server.Config, error) {
 		idleSec   = flag.Int("idle", 300, "连接空闲超时时间，单位秒，<=0 表示不超时")
 		accountFS server.MultiAccountFlag
 	)
-	flag.Var(&accountFS, "account", "下级平台账号，格式 userID:password:verifyCode，可重复指定")
+	flag.Var(&accountFS, "account", "下级平台账号，格式 userID:password:gnssCenterID，可重复指定")
 	flag.Parse()
 
 	cfg := server.Config{
@@ -63,9 +61,9 @@ func parseConfig() (server.Config, error) {
 	if len(accountFS) == 0 {
 		// 默认账号，方便快速体验。
 		accountFS = append(accountFS, server.Account{
-			UserID:     10001,
-			Password:   "pass809",
-			VerifyCode: 0x13572468,
+			UserID:       10001,
+			Password:     "pass809",
+			GnssCenterID: 324469864,
 		})
 	}
 	cfg.Accounts = accountFS

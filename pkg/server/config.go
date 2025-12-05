@@ -20,9 +20,9 @@ type Config struct {
 
 // Account 表示允许接入的下级平台注册信息。
 type Account struct {
-	UserID     uint32
-	Password   string
-	VerifyCode uint32
+	UserID       uint32
+	Password     string
+	GnssCenterID uint32
 }
 
 // normalizeHostPort 将 host:port 字符串拆分为 host 与 port，便于 go-server 初始化。
@@ -47,34 +47,30 @@ type MultiAccountFlag []Account
 func (m *MultiAccountFlag) String() string {
 	parts := make([]string, 0, len(*m))
 	for _, acc := range *m {
-		parts = append(parts, fmt.Sprintf("%d:%s:%d", acc.UserID, acc.Password, acc.VerifyCode))
+		parts = append(parts, fmt.Sprintf("%d:%s:%d", acc.UserID, acc.Password, acc.GnssCenterID))
 	}
 	return strings.Join(parts, ",")
 }
 
 func (m *MultiAccountFlag) Set(value string) error {
 	parts := strings.Split(value, ":")
-	if len(parts) < 3 || len(parts) > 4 {
-		return errors.New("account must be formatted as userID:password:verifyCode")
+	if len(parts) != 3 {
+		return errors.New("account must be formatted as userID:password:gnssCenterID")
 	}
 	userID, err := strconv.ParseUint(parts[0], 10, 32)
 	if err != nil {
 		return fmt.Errorf("parse user id %q: %w", parts[0], err)
 	}
-	verify, err := strconv.ParseUint(parts[2], 0, 32)
+	gnssCenterID, err := strconv.ParseUint(parts[2], 0, 32)
 	if err != nil {
 		return fmt.Errorf("parse verify code %q: %w", parts[2], err)
 	}
 	acc := Account{
-		UserID:     uint32(userID),
-		Password:   parts[1],
-		VerifyCode: uint32(verify),
+		UserID:       uint32(userID),
+		Password:     parts[1],
+		GnssCenterID: uint32(gnssCenterID),
 	}
-	if len(parts) == 4 {
-		if parts[3] != "2019" {
-			return fmt.Errorf("unsupported version %q, only 2019 is available", parts[3])
-		}
-	}
+
 	*m = append(*m, acc)
 	return nil
 }

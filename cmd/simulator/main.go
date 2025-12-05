@@ -60,11 +60,10 @@ func main() {
 		MsgSN:   1,
 		Version: jtt809.Version{Major: 1, Minor: 0, Patch: 0},
 	}, jtt809.LoginRequest{
-		UserID:          uint32(*userID),
-		Password:        *password,
-		DownLinkIP:      *myIP,
-		DownLinkPort:    uint16(*subPort),
-		ProtocolVersion: [3]byte{1, 2, 19},
+		UserID:       uint32(*userID),
+		Password:     *password,
+		DownLinkIP:   *myIP,
+		DownLinkPort: uint16(*subPort),
 	})
 	if err != nil {
 		log.Fatalf("Build login failed: %v", err)

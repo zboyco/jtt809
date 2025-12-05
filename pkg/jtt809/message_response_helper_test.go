@@ -5,14 +5,7 @@ import (
 	"fmt"
 )
 
-var (
-	// ErrUnsupportedResponse 表示当前报文不支持自动应答。
-	ErrUnsupportedResponse = errors.New("unsupported message for automatic response")
-	// ErrMissingSender 表示缺少发送回调（如心跳定时器）。
-	ErrMissingSender = errors.New("send callback is required")
-)
-
-// GenerateResponse 根据收到的帧自动生成应答包（不含转义编码），支持主链路登录/心跳/注销及从链路登录/心跳。
+// GenerateResponse 仅用于测试场景，根据收到的帧自动生成应答包（不含转义编码），支持主链路登录/心跳/注销及从链路登录/心跳。
 // 对登录请求需传入 auth 鉴权回调；其余业务可置为 nil。
 func GenerateResponse(frame *Frame, auth AuthValidator) (*Package, error) {
 	if frame == nil {
@@ -47,6 +40,6 @@ func GenerateResponse(frame *Frame, auth AuthValidator) (*Package, error) {
 		header := frame.Header.WithResponse(0x9006)
 		return &Package{Header: header, Body: SubLinkHeartbeatResponse{}}, nil
 	default:
-		return nil, ErrUnsupportedResponse
+		return nil, errors.New("unsupported message for automatic response")
 	}
 }

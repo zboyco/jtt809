@@ -56,7 +56,7 @@ go build -o server ./cmd/server
 - `-http`: HTTP管理接口地址
 - `-idle`: 连接空闲超时时间（秒），`<=0` 表示不超时
 - `-account`: 下级平台账号，可重复指定多个
-  - 格式: `userID:password:verifyCode`
+  - 格式: `userID:password:gnssCenterID`
 
 **多账号示例：**
 ```bash

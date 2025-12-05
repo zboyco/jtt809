@@ -11,23 +11,22 @@ import (
 type LoginResult byte
 
 const (
-	LoginOK              LoginResult = 0x00
-	LoginIPError         LoginResult = 0x01
-	LoginAccessCodeError LoginResult = 0x02
-	LoginUnregistered    LoginResult = 0x03
-	LoginPasswordError   LoginResult = 0x04
-	LoginResourceBusy    LoginResult = 0x05
-	LoginOtherError      LoginResult = 0x06
+	LoginOK                LoginResult = 0x00
+	LoginIPError           LoginResult = 0x01
+	LoginGnssCenterIDError LoginResult = 0x02
+	LoginUnregistered      LoginResult = 0x03
+	LoginPasswordError     LoginResult = 0x04
+	LoginResourceBusy      LoginResult = 0x05
+	LoginOtherError        LoginResult = 0xFF
 )
 
 // LoginRequest 表示主链路登录请求（0x1001）的业务体，包含账号、密码、下级平台参数。
 type LoginRequest struct {
-	UserID          uint32
-	Password        string
-	AccessCode      uint32 // 下级平台接入码
-	DownLinkIP      string
-	DownLinkPort    uint16
-	ProtocolVersion [3]byte // 协议版本号
+	UserID       uint32
+	Password     string
+	GnssCenterID uint32 // 下级平台接入码
+	DownLinkIP   string
+	DownLinkPort uint16
 }
 
 func (l LoginRequest) MsgID() uint16 { return MsgIDLoginRequest }
@@ -39,12 +38,9 @@ func (l LoginRequest) Encode() ([]byte, error) {
 	var buf bytes.Buffer
 	_ = binary.Write(&buf, binary.BigEndian, l.UserID)
 	buf.Write(PadRightGBK(l.Password, 8))
-	if l.AccessCode != 0 {
-		_ = binary.Write(&buf, binary.BigEndian, l.AccessCode)
-	}
+	_ = binary.Write(&buf, binary.BigEndian, l.GnssCenterID)
 	buf.Write(PadRightGBK(l.DownLinkIP, 32))
 	_ = binary.Write(&buf, binary.BigEndian, l.DownLinkPort)
-	buf.Write(l.ProtocolVersion[:])
 	return buf.Bytes(), nil
 }
 
@@ -60,23 +56,19 @@ func (l LoginRequest) validate() error {
 
 // ParseLoginRequest 解析主链路登录请求业务体，返回结构化的登录参数。
 func ParseLoginRequest(body []byte) (LoginRequest, error) {
-	// 业务体长度：4+8+4+32+2(+3) = 50-53字节（ProtocolVersion可选）
-	if len(body) < 50 {
-		return LoginRequest{}, errors.New("login body too short")
+	// 业务体长度：4+8+4+32+2 = 50字节
+	if len(body) != 50 {
+		return LoginRequest{}, errors.New("login body length must be 50 bytes")
 	}
 
 	req := LoginRequest{
 		UserID:       binary.BigEndian.Uint32(body[0:4]),
 		Password:     strings.TrimRight(string(body[4:12]), "\x00"),
-		AccessCode:   binary.BigEndian.Uint32(body[12:16]),
+		GnssCenterID: binary.BigEndian.Uint32(body[12:16]),
 		DownLinkIP:   strings.TrimRight(string(body[16:48]), "\x00"),
 		DownLinkPort: binary.BigEndian.Uint16(body[48:50]),
 	}
 
-	// 解析协议版本号（如果有）
-	if len(body) >= 53 {
-		copy(req.ProtocolVersion[:], body[50:53])
-	}
 	return req, nil
 }
 
@@ -96,19 +88,6 @@ func (l LoginResponse) Encode() ([]byte, error) {
 
 // AuthValidator 定义鉴权回调接口，可注入自定义帐号校验逻辑。
 type AuthValidator func(LoginRequest) (LoginResponse, error)
-
-// SimpleAuthValidator 提供基于固定账号/密码的简易鉴权实现，验证失败时返回对应错误码。
-func SimpleAuthValidator(expectedUser uint32, expectedPassword string, verifyCode uint32) AuthValidator {
-	return func(req LoginRequest) (LoginResponse, error) {
-		if req.UserID != expectedUser {
-			return LoginResponse{Result: LoginUnregistered, VerifyCode: verifyCode}, nil
-		}
-		if req.Password != expectedPassword {
-			return LoginResponse{Result: LoginPasswordError, VerifyCode: verifyCode}, nil
-		}
-		return LoginResponse{Result: LoginOK, VerifyCode: verifyCode}, nil
-	}
-}
 
 // BuildLoginPackage 直接构造登录请求完整报文（含头、业务体与转义）。
 func BuildLoginPackage(header Header, req LoginRequest) ([]byte, error) {

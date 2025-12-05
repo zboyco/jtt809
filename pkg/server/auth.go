@@ -1,7 +1,9 @@
 package server
 
 import (
+	"math/rand"
 	"sync"
+	"time"
 
 	"github.com/zboyco/jtt809/pkg/jtt809"
 )
@@ -29,13 +31,18 @@ func (a *Authenticator) Authenticate(req jtt809.LoginRequest) (Account, jtt809.L
 		return Account{}, jtt809.LoginResponse{Result: jtt809.LoginUnregistered}
 	}
 	resp := jtt809.LoginResponse{
-		Result:     jtt809.LoginOK,
-		VerifyCode: acc.VerifyCode,
+		Result: jtt809.LoginOK,
+	}
+	if req.GnssCenterID != acc.GnssCenterID {
+		resp.Result = jtt809.LoginGnssCenterIDError
+		return acc, resp
 	}
 	if req.Password != acc.Password {
 		resp.Result = jtt809.LoginPasswordError
 		return acc, resp
 	}
+	// 随机生成一个uint32校验码
+	resp.VerifyCode = rand.New(rand.NewSource(time.Now().UnixNano())).Uint32()
 	return acc, resp
 }
 

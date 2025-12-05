@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-func PrintStartupInfo(cfg Config) {
+func printStartupInfo(cfg Config) {
 	fmt.Println("\n" + strings.Repeat("=", 80))
 	fmt.Println("  JT/T 809-2019 上级平台服务器")
 	fmt.Println(strings.Repeat("=", 80))
@@ -27,11 +27,11 @@ func PrintStartupInfo(cfg Config) {
 	// 账号信息
 	fmt.Println("\n🔑 下级平台账号列表:")
 	fmt.Println("  ┌────────┬──────────────┬───────────────┐")
-	fmt.Println("  │ 用户ID │    密码      │   校验码      │")
+	fmt.Println("  │ 用户ID │    密码      │   平台接入码  │")
 	fmt.Println("  ├────────┼──────────────┼───────────────┤")
 	for _, acc := range cfg.Accounts {
-		fmt.Printf("  │ %-6d │ %-12s │ 0x%08X    │\n",
-			acc.UserID, acc.Password, acc.VerifyCode)
+		fmt.Printf("  │ %-6d │ %-12s │ %10d    │\n",
+			acc.UserID, acc.Password, acc.GnssCenterID)
 	}
 	fmt.Println("  └────────┴──────────────┴───────────────┘")
 

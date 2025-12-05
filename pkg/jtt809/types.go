@@ -58,7 +58,6 @@ type Header struct {
 	EncryptFlag  byte
 	EncryptKey   uint32
 	Timestamp    time.Time
-	WithUTC      bool
 }
 
 // WithResponse 以当前头为模板生成应答头，设置目标业务 ID，若流水号未写入则自动生成。
@@ -83,7 +82,7 @@ type Package struct {
 }
 
 var (
-	defaultVersion = Version{Major: 1, Minor: 2, Patch: 19} // 默认协议版本号
+	defaultVersion = Version{Major: 1, Minor: 2, Patch: 15} // 默认协议版本号
 	seq            uint32
 )
 
@@ -103,10 +102,7 @@ func EncodePackage(pkg Package) ([]byte, error) {
 	if header.Version == (Version{}) {
 		header.Version = defaultVersion
 	}
-	// 默认携带 UTC
-	if header.WithUTC || header.Version.Patch >= 19 {
-		header.WithUTC = true
-	}
+
 	if header.Timestamp.IsZero() {
 		header.Timestamp = time.Now()
 	}
@@ -129,11 +125,9 @@ func EncodePackage(pkg Package) ([]byte, error) {
 	buf.WriteByte(header.EncryptFlag)
 	_ = binary.Write(&buf, binary.BigEndian, header.EncryptKey)
 
-	if header.WithUTC {
-		// 以1970-01-01为基准，存储UTC秒，按规范需要减8小时
-		secs := uint64(header.Timestamp.UTC().Add(-8 * time.Hour).Unix())
-		_ = binary.Write(&buf, binary.BigEndian, secs)
-	}
+	// 按协议字段直接存储 UTC 秒
+	secs := uint64(header.Timestamp.Unix())
+	_ = binary.Write(&buf, binary.BigEndian, secs)
 
 	buf.Write(body)
 
@@ -188,23 +182,10 @@ func DecodeFrame(data []byte) (*Frame, error) {
 		EncryptFlag:  unescaped[18],
 		EncryptKey:   binary.BigEndian.Uint32(unescaped[19:23]),
 	}
-	headerLen := 22
-	// 判断是否包含UTC字段：优先看版本号，其次看实际数据长度
-	// 兼容某些客户端Version字段填错但实际仍携带UTC字段的情况
-	hasUTC := header.Version.Patch >= 19
-	if !hasUTC && len(unescaped) >= 31+22 {
-		// 如果数据长度足够容纳UTC字段(至少31+22字节)，尝试按带UTC格式解析
-		hasUTC = true
-	}
-	if hasUTC {
-		if len(unescaped) < 31 {
-			return nil, errors.New("header too short for extended timestamp")
-		}
-		headerLen = 30
-		header.WithUTC = true
-		secs := int64(binary.BigEndian.Uint64(unescaped[23:31]))
-		header.Timestamp = time.Unix(secs, 0).Add(8 * time.Hour).UTC()
-	}
+
+	headerLen := 30
+	secs := int64(binary.BigEndian.Uint64(unescaped[23:31]))
+	header.Timestamp = time.Unix(secs, 0)
 
 	bodyStart := 1 + headerLen
 	if bodyStart > bodyEnd {

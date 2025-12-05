@@ -22,11 +22,9 @@ func TestDecodeSampleFrame(t *testing.T) {
 	if frame.Header.MsgLength != 201 {
 		t.Fatalf("unexpected msg length: %d", frame.Header.MsgLength)
 	}
-	if !frame.Header.WithUTC {
-		t.Fatalf("expected UTC header")
-	}
+
 	// 样例中的时间字段值为 0x5EA507B8（UTC 秒）。
-	expectedTime := time.Unix(0x5EA507B8, 0).Add(8 * time.Hour).UTC()
+	expectedTime := time.Unix(0x5EA507B8, 0).UTC()
 	if !frame.Header.Timestamp.Equal(expectedTime) {
 		t.Fatalf("timestamp mismatch: got %v expected %v (unix=%d)", frame.Header.Timestamp, expectedTime, frame.Header.Timestamp.Unix())
 	}

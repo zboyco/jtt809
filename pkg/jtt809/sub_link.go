@@ -1,19 +1,23 @@
 package jtt809
 
-import "errors"
+import (
+	"encoding/binary"
+	"errors"
+)
 
 // From-link (从链路) 基础消息。
 
 // SubLinkLoginRequest 从链路登录请求（0x9001），由下级向上级从链路发起鉴权。
 type SubLinkLoginRequest struct {
-	UserID   uint32
-	Password string // 8 字节
+	VerifyCode uint32 // 主链路登录成功后返回的校验码
 }
 
 func (SubLinkLoginRequest) MsgID() uint16 { return MsgIDDownlinkConnReq }
 
 func (s SubLinkLoginRequest) Encode() ([]byte, error) {
-	return LoginRequest{UserID: s.UserID, Password: s.Password, DownLinkIP: "0", DownLinkPort: 0}.Encode()
+	var buf [4]byte
+	binary.BigEndian.PutUint32(buf[:], s.VerifyCode)
+	return buf[:], nil
 }
 
 // SubLinkLoginResponse 从链路登录应答（0x9002），上级返回登录结果。

@@ -6,11 +6,10 @@ import (
 
 func TestLoginEncodeAndDecode(t *testing.T) {
 	req := LoginRequest{
-		UserID:          10001,
-		Password:        "123456",
-		DownLinkIP:      "127.0.0.1",
-		DownLinkPort:    8080,
-		ProtocolVersion: [3]byte{1, 0, 0},
+		UserID:       10001,
+		Password:     "123456",
+		DownLinkIP:   "127.0.0.1",
+		DownLinkPort: 8080,
 	}
 	encoded, err := req.Encode()
 	if err != nil {
@@ -38,11 +37,10 @@ func TestLoginEncodeAndDecode(t *testing.T) {
 
 func TestLoginRequestValidate(t *testing.T) {
 	req := LoginRequest{
-		UserID:          10001,
-		Password:        "123456789", // too long
-		DownLinkIP:      "127.0.0.1",
-		DownLinkPort:    8080,
-		ProtocolVersion: [3]byte{1, 0, 0},
+		UserID:       10001,
+		Password:     "123456789", // too long
+		DownLinkIP:   "127.0.0.1",
+		DownLinkPort: 8080,
 	}
 	if _, err := req.Encode(); err == nil {
 		t.Fatalf("expected password length error")

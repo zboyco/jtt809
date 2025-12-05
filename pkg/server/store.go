@@ -24,7 +24,7 @@ type PlatformState struct {
 	DownLinkPort  uint16
 	MainSessionID string
 	SubClient     *client.SimpleClient
-	Password      string // 用于从链路重连
+	VerifyCode    uint32 // 用于从链路重连
 	Reconnecting  bool   // 是否正在重连，防止重复重连
 
 	LastMainHeartbeat time.Time
@@ -78,7 +78,7 @@ type PlatformSnapshot struct {
 	DownLinkPort  uint16            `json:"down_link_port"`
 	MainSessionID string            `json:"main_session_id"`
 	SubConnected  bool              `json:"sub_connected"`
-	Password      string            `json:"-"` // 不对外暴露
+	VerifyCode    uint32            `json:"-"` // 不对外暴露
 	LastMainBeat  time.Time         `json:"last_main_heartbeat"`
 	LastSubBeat   time.Time         `json:"last_sub_heartbeat"`
 	PlatformID    string            `json:"platform_id,omitempty"` // 平台唯一编码
@@ -108,17 +108,15 @@ func NewPlatformStore() *PlatformStore {
 }
 
 // BindMainSession 在主链路登录成功后建立会话映射。
-func (s *PlatformStore) BindMainSession(sessionID string, req jtt809.LoginRequest, password string) {
+func (s *PlatformStore) BindMainSession(sessionID string, req jtt809.LoginRequest, gnssCenterID uint32, verifyCode uint32) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	state := s.ensurePlatformLocked(req.UserID)
-	// 注意：LoginRequest 中已无 GNSSCenterID，该信息在 Header 中
-	// 这里我们假设 Header 中的 GNSSCenterID 已经校验过，或者直接信任
-	// if header.GNSSCenterID != s.centerID { ... }
+	state.GNSSCenterID = gnssCenterID
 	state.DownLinkIP = req.DownLinkIP
 	state.DownLinkPort = req.DownLinkPort
 	state.MainSessionID = sessionID
-	state.Password = password
+	state.VerifyCode = verifyCode
 	state.LastMainHeartbeat = time.Now()
 	s.sessionIndex[sessionID] = req.UserID
 }
@@ -342,7 +340,7 @@ func (state *PlatformState) snapshotLocked() PlatformSnapshot {
 		DownLinkPort:  state.DownLinkPort,
 		MainSessionID: state.MainSessionID,
 		SubConnected:  state.SubClient != nil,
-		Password:      state.Password,
+		VerifyCode:    state.VerifyCode,
 		LastMainBeat:  state.LastMainHeartbeat,
 		LastSubBeat:   state.LastSubHeartbeat,
 		PlatformID:    state.PlatformID,

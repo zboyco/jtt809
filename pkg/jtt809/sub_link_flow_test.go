@@ -5,7 +5,7 @@ import "testing"
 // 从链路登录请求发送：使用构造器生成并校验业务 ID 与负载。
 func TestSubLinkSendLoginRequest(t *testing.T) {
 	header := Header{GNSSCenterID: 0x01020304}
-	req := SubLinkLoginRequest{UserID: 1024, Password: "pwd123"}
+	req := SubLinkLoginRequest{VerifyCode: 0x13572468}
 	data, err := BuildSubLinkLoginPackage(header, req)
 	if err != nil {
 		t.Fatalf("build sub link login: %v", err)
@@ -17,7 +17,7 @@ func TestSubLinkSendLoginRequest(t *testing.T) {
 	if frame.BodyID != MsgIDDownlinkConnReq {
 		t.Fatalf("unexpected body id: %x", frame.BodyID)
 	}
-	if len(frame.RawBody) != 4+8+4+32+2 { // 复用主链路登录体结构
+	if len(frame.RawBody) != 4 {
 		t.Fatalf("unexpected body length: %d", len(frame.RawBody))
 	}
 }
