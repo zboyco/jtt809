@@ -31,9 +31,7 @@ const (
 	SubMsgApplyForMonitorEndAck     uint16 = 0x1206 // 结束车辆定位信息交换应答
 
 	// JT/T 1078-2016 子业务
-	SubMsgAuthorizeStartupReq         uint16 = 0x1701 // 时效口令上报消息 (UP_AUTHORIZE_MSG_STARTUP)
-	SubMsgAuthorizeStartupReqMsg      uint16 = 0x1702 // 时效口令请求 (UP_AUTHORIZE_MSG_STARTUP_REQ)
-	SubMsgAuthorizeStartupReqAck      uint16 = 0x9702 // 时效口令请求应答 (DOWN_AUTHORIZE_MSG_STARTUP_REQ_ACK)
+	SubMsgAuthorizeStartupReq     uint16 = 0x1701 // 时效口令上报消息 (UP_AUTHORIZE_MSG_STARTUP)
 	SubMsgRealTimeVideoStartupAck     uint16 = 0x1801 // 实时音视频请求应答消息 (UP_REALVIDEO_MSG_STARTUP_ACK)
 	SubMsgDownRealTimeVideoStartupReq uint16 = 0x9801 // 实时音视频请求消息 (DOWN_REALVIDEO_MSG_STARTUP)
 )

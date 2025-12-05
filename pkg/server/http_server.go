@@ -87,9 +87,7 @@ func (g *JT809Gateway) handleVideoRequest(w http.ResponseWriter, r *http.Request
 	if req.VehicleColor == 0 {
 		req.VehicleColor = jtt809.VehicleColorBlue
 	}
-	if req.ChannelID == 0 {
-		req.ChannelID = 1
-	}
+
 	if err := g.RequestVideoStream(req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

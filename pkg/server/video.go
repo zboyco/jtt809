@@ -23,14 +23,6 @@ type VideoRequest struct {
 	GnssHex      string `json:"gnss_hex,omitempty"`
 }
 
-// MonitorRequest 表示车辆定位信息交换请求（订阅/取消订阅车辆GPS）。
-type MonitorRequest struct {
-	UserID       uint32 `json:"user_id"`
-	VehicleNo    string `json:"vehicle_no"`
-	VehicleColor byte   `json:"vehicle_color"`
-	ReasonCode   byte   `json:"reason_code"` // 0=进入区域,1=人工指定,2=应急,3=其它
-}
-
 // RequestVideoStream 通过主链路向下级平台发送实时视频请求。
 func (g *JT809Gateway) RequestVideoStream(req VideoRequest) error {
 	if req.VehicleNo == "" {
@@ -49,6 +41,9 @@ func (g *JT809Gateway) RequestVideoStream(req VideoRequest) error {
 	}
 	if snap.MainSessionID == "" {
 		return errors.New("main link is not established")
+	}
+	if snap.GNSSCenterID == 0 {
+		return fmt.Errorf("gnss_center_id is missing for platform %d, abort send", req.UserID)
 	}
 	session, err := g.mainSrv.GetSessionByID(snap.MainSessionID)
 	if err != nil {
@@ -119,74 +114,6 @@ func (r rawBody) MsgID() uint16 { return r.msgID }
 
 func (r rawBody) Encode() ([]byte, error) {
 	return r.payload, nil
-}
-
-// RequestMonitorStartup 通过从链路向下级平台发送启动车辆定位信息交换请求。
-func (g *JT809Gateway) RequestMonitorStartup(req MonitorRequest) error {
-	if req.VehicleNo == "" {
-		return errors.New("vehicle_no is required")
-	}
-	if req.VehicleColor == 0 {
-		req.VehicleColor = jtt809.VehicleColorBlue
-	}
-	return g.sendMonitorRequest(req, true)
-}
-
-// RequestMonitorEnd 通过从链路向下级平台发送结束车辆定位信息交换请求。
-func (g *JT809Gateway) RequestMonitorEnd(req MonitorRequest) error {
-	if req.VehicleNo == "" {
-		return errors.New("vehicle_no is required")
-	}
-	if req.VehicleColor == 0 {
-		req.VehicleColor = jtt809.VehicleColorBlue
-	}
-	return g.sendMonitorRequest(req, false)
-}
-
-func (g *JT809Gateway) sendMonitorRequest(req MonitorRequest, startup bool) error {
-	g.store.mu.RLock()
-	state := g.store.platforms[req.UserID]
-	g.store.mu.RUnlock()
-	if state == nil {
-		return fmt.Errorf("platform %d not online", req.UserID)
-	}
-	if state.SubClient == nil {
-		return errors.New("sub link is not established")
-	}
-	var body jtt809.Body
-	if startup {
-		body = jtt809.ApplyForMonitorStartup{
-			VehicleNo:    req.VehicleNo,
-			VehicleColor: req.VehicleColor,
-			ReasonCode:   jtt809.MonitorReasonCode(req.ReasonCode),
-		}
-	} else {
-		body = jtt809.ApplyForMonitorEnd{
-			VehicleNo:    req.VehicleNo,
-			VehicleColor: req.VehicleColor,
-			ReasonCode:   jtt809.MonitorReasonCode(req.ReasonCode),
-		}
-	}
-	msg := jtt809.Package{
-		Header: jtt809.Header{
-			GNSSCenterID: state.GNSSCenterID,
-		},
-		Body: body,
-	}
-	data, err := jtt809.EncodePackage(msg)
-	if err != nil {
-		return fmt.Errorf("encode package: %w", err)
-	}
-	g.logPacket("sub", "send", fmt.Sprintf("%d", req.UserID), data)
-	if err := state.SubClient.Send(data); err != nil {
-		return fmt.Errorf("send frame: %w", err)
-	}
-	action := "startup"
-	if !startup {
-		action = "end"
-	}
-	slog.Info("monitor request sent", "action", action, "user_id", req.UserID, "plate", req.VehicleNo)
-	return nil
 }
 
 func buildSubBusinessBody(plate string, color byte, subID uint16, payload []byte) ([]byte, error) {

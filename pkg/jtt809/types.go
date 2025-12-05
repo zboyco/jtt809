@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -33,7 +34,6 @@ const (
 	// JT/T 1078-2016 视频业务
 	MsgIDAuthorize         uint16 = 0x1700 // 视频相关鉴权
 	MsgIDRealTimeVideo     uint16 = 0x1800 // 实时音视频
-	MsgIDDownAuthorize     uint16 = 0x9700 // 下行视频鉴权
 	MsgIDDownRealTimeVideo uint16 = 0x9800 // 下行实时音视频
 )
 
@@ -60,12 +60,9 @@ type Header struct {
 	Timestamp    time.Time
 }
 
-// WithResponse 以当前头为模板生成应答头，设置目标业务 ID，若流水号未写入则自动生成。
+// WithResponse 以当前头为模板生成应答头，设置目标业务 ID
 func (h Header) WithResponse(msgID uint16) Header {
 	h.BusinessType = msgID
-	if h.MsgSN == 0 {
-		h.MsgSN = atomic.AddUint32(&seq, 1)
-	}
 	return h
 }
 
@@ -83,8 +80,32 @@ type Package struct {
 
 var (
 	defaultVersion = Version{Major: 1, Minor: 2, Patch: 15} // 默认协议版本号
-	seq            uint32
+	subSeq         = newSubSeqStore()
 )
+
+type subSeqKey struct {
+	gnssCenterID    uint32
+	businessType    uint16
+	subBusinessType uint16
+}
+
+type subSeqStore struct {
+	counters sync.Map // map[subSeqKey]*uint32
+}
+
+func newSubSeqStore() *subSeqStore {
+	return &subSeqStore{}
+}
+
+func (s *subSeqStore) next(gnssCenterID uint32, businessType, subBusinessType uint16) uint32 {
+	key := subSeqKey{
+		gnssCenterID:    gnssCenterID,
+		businessType:    businessType,
+		subBusinessType: subBusinessType,
+	}
+	counter, _ := s.counters.LoadOrStore(key, new(uint32))
+	return atomic.AddUint32(counter.(*uint32), 1)
+}
 
 // EncodePackage 根据消息头与业务体生成完整报文，自动补齐缺省字段、加 CRC 校验并进行转义。
 func EncodePackage(pkg Package) ([]byte, error) {
@@ -106,9 +127,9 @@ func EncodePackage(pkg Package) ([]byte, error) {
 	if header.Timestamp.IsZero() {
 		header.Timestamp = time.Now()
 	}
-	if header.MsgSN == 0 {
-		header.MsgSN = atomic.AddUint32(&seq, 1)
-	}
+
+	// 计算流水号
+	header.MsgSN = allocateMsgSN(header, pkg.Body, body)
 
 	var buf bytes.Buffer
 	buf.WriteByte(beginFlag)
@@ -178,7 +199,6 @@ func DecodeFrame(data []byte) (*Frame, error) {
 		MsgSN:        binary.BigEndian.Uint32(unescaped[5:9]),
 		BusinessType: binary.BigEndian.Uint16(unescaped[9:11]),
 		GNSSCenterID: binary.BigEndian.Uint32(unescaped[11:15]),
-		Version:      Version{Major: unescaped[15], Minor: unescaped[16], Patch: unescaped[17]},
 		EncryptFlag:  unescaped[18],
 		EncryptKey:   binary.BigEndian.Uint32(unescaped[19:23]),
 	}
@@ -287,4 +307,25 @@ func decodeEscape(src []byte) ([]byte, error) {
 		out = append(out, b)
 	}
 	return out, nil
+}
+
+func allocateMsgSN(header Header, body Body, encodedBody []byte) uint32 {
+	subID := resolveSubBusinessID(body, encodedBody)
+	return subSeq.next(header.GNSSCenterID, header.BusinessType, subID)
+}
+
+func resolveSubBusinessID(body Body, encodedBody []byte) uint16 {
+	if body == nil || encodedBody == nil {
+		return 0
+	}
+	if provider, ok := body.(interface{ SubBusinessType() uint16 }); ok {
+		return provider.SubBusinessType()
+	}
+
+	// 按照通用子业务封装格式：车牌(21) + 颜色(1) + 子业务ID(2)
+	if len(encodedBody) >= 24 {
+		return binary.BigEndian.Uint16(encodedBody[22:24])
+	}
+
+	return 0
 }

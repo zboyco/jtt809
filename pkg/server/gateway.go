@@ -190,6 +190,10 @@ func (g *JT809Gateway) connectSubLinkWithRetry(userID uint32) {
 			slog.Warn("missing sub link address, stop reconnecting", "user_id", userID, "ip", snap.DownLinkIP, "port", snap.DownLinkPort)
 			return
 		}
+		if snap.GNSSCenterID == 0 {
+			slog.Warn("missing GNSSCenterID, stop sub link reconnect", "user_id", userID)
+			return
+		}
 
 		if g.connectSubLink(snap.DownLinkIP, snap.DownLinkPort, userID, snap.GNSSCenterID, snap.VerifyCode) {
 			return
@@ -218,13 +222,8 @@ func (g *JT809Gateway) connectSubLink(ip string, port uint16, userID uint32, gns
 	// Send Login
 	req := jtt809.SubLinkLoginRequest{VerifyCode: verifyCode}
 	pkg, _ := jtt809.BuildSubLinkLoginPackage(jtt809.Header{
-		MsgLength:    0, // auto
-		MsgSN:        1,
 		BusinessType: jtt809.MsgIDDownlinkConnReq,
 		GNSSCenterID: gnssCenterID,
-		Version:      jtt809.Version{Major: 1, Minor: 2, Patch: 15},
-		EncryptFlag:  0,
-		EncryptKey:   0,
 	}, req)
 
 	g.logPacket("sub", "send", fmt.Sprintf("%d", userID), pkg)
@@ -347,9 +346,17 @@ func (g *JT809Gateway) keepAliveSubLink(c *client.SimpleClient, userID uint32) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
+		snap, ok := g.store.Snapshot(userID)
+		if !ok {
+			slog.Warn("skip sub heartbeat, snapshot missing", "user_id", userID)
+			continue
+		}
+		if snap.GNSSCenterID == 0 {
+			slog.Warn("skip sub heartbeat, missing GNSSCenterID", "user_id", userID)
+			continue
+		}
 		hb, _ := jtt809.BuildSubLinkHeartbeat(jtt809.Header{
-			MsgSN:   0, // TODO: maintain SN
-			Version: jtt809.Version{Major: 1, Minor: 2, Patch: 15},
+			GNSSCenterID: snap.GNSSCenterID,
 		})
 		g.logPacket("sub", "send", fmt.Sprintf("%d", userID), hb)
 		if err := c.Send(hb); err != nil {
@@ -444,23 +451,6 @@ func (g *JT809Gateway) handleDynamicInfo(session *goserver.AppSession, frame *jt
 			parsed++
 		}
 		slog.Info("batch vehicle location", "user_id", user, "plate", pkt.Plate, "count", parsed)
-	// 注意：0x1701 (时效口令上报) 应该通过 0x1700 (视频鉴权) 主业务类型传输，
-	// 而不是通过 0x1200 (动态信息)。根据 JT/T 809-2019 标准，视频相关消息应使用专门的 0x1700。
-	// 如果收到 0x1200 中的 0x1701，记录警告但不处理。
-	case pkt.SubBusinessID == jtt809.SubMsgAuthorizeStartupReq:
-		slog.Warn("received 0x1701 in 0x1200, should use 0x1700 instead", "user_id", user, "plate", pkt.Plate)
-	case pkt.SubBusinessID == jtt809.SubMsgRealTimeVideoStartupAck:
-		ack, err := jt1078.ParseRealTimeVideoStartupAck(pkt.Payload)
-		if err != nil {
-			slog.Warn("parse video ack failed", "session", session.ID, "err", err)
-			return
-		}
-		g.store.RecordVideoAck(user, pkt.Color, pkt.Plate, &VideoAckState{
-			Result:     ack.Result,
-			ServerIP:   ack.ServerIP,
-			ServerPort: ack.ServerPort,
-		})
-		slog.Info("video stream ack", "user_id", user, "plate", pkt.Plate, "server", ack.ServerIP, "port", ack.ServerPort, "result", ack.Result)
 	case pkt.SubBusinessID == jtt809.SubMsgApplyForMonitorStartupAck:
 		ack, err := jtt809.ParseMonitorAck(pkt.Payload)
 		if err != nil {
@@ -640,39 +630,6 @@ func (g *JT809Gateway) handleAuthorize(session *goserver.AppSession, frame *jtt8
 		// 注意：0x1700 消息中没有车牌号和颜色信息，时效口令是平台级别的
 		g.store.UpdateAuthCode(user, req.PlatformID, authCode)
 		slog.Info("video authorize report", "user_id", user, "platform", req.PlatformID, "auth_code", authCode)
-
-	case jtt809.SubMsgAuthorizeStartupReqMsg: // 0x1702
-		slog.Info("video authorize request", "user_id", user)
-
-		downMsg := jt1078.DownAuthorizeMsg{
-			SubBusinessID: jtt809.SubMsgAuthorizeStartupReqAck, // 0x9702
-			Payload:       []byte{},
-		}
-
-		encodedBody, err := downMsg.Encode()
-		if err != nil {
-			slog.Error("encode down authorize msg failed", "err", err)
-			return
-		}
-
-		respPkg := jtt809.Package{
-			Header: frame.Header.WithResponse(jtt809.MsgIDDownAuthorize), // 0x9700
-			Body: rawBody{
-				msgID:   jtt809.MsgIDDownAuthorize,
-				payload: encodedBody,
-			},
-		}
-
-		data, err := jtt809.EncodePackage(respPkg)
-		if err != nil {
-			slog.Error("encode package failed", "err", err)
-			return
-		}
-
-		if err := session.Send(data); err != nil {
-			slog.Error("send authorize ack failed", "err", err)
-		}
-		slog.Info("sent authorize ack (0x9702)", "user_id", user)
 
 	default:
 		slog.Debug("unhandled authorize sub msg", "sub_id", fmt.Sprintf("0x%04X", msg.SubBusinessID))

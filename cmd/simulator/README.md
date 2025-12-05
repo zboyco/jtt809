@@ -122,7 +122,6 @@ sequenceDiagram
     Simulator->>Server: 订阅应答 (0x1200/0x1206)
 
     Note over Simulator,Server: 7. 视频请求应答
-    Server->>Simulator: 时效口令请求 (0x9700/0x1702)
     Simulator->>Server: 时效口令上报 (0x1700/0x1701)
     Server->>Simulator: 实时视频请求 (0x9800/0x9801)
     Simulator->>Server: 视频请求应答 (0x1800/0x1801)
@@ -207,8 +206,6 @@ Heartbeat Response Received
 | `Sub Link Login Request Received` | 收到从链路登录请求 |
 | `[Sub] Sent Login Response` | 已发送从链路登录响应 |
 | `Sub Link Heartbeat Received` | 收到从链路心跳 |
-| `[Main] Authorize Request` | 收到时效口令请求 (0x9700/0x1702) |
-| `[Main] Sending Authorize Response` | 已发送时效口令应答 (0x1700/0x1701) |
 | `[Sub] Monitor startup request` | 收到GPS订阅请求 (0x9200/0x9205) |
 | `[Sub] Monitor startup ack sent` | 已发送GPS订阅应答 |
 | `[GPS] Starting GPS reporting` | 启动GPS上报（5秒间隔） |
@@ -314,7 +311,5 @@ Heartbeat Response Received
 - `0x9200`: 车辆动态信息交换（下行）
   - `0x9205`: 启动车辆定位信息交换请求
   - `0x9206`: 结束车辆定位信息交换请求
-- `0x9700`: 视频鉴权（下行，JT/T 1078-2016）
-  - `0x1702`: 时效口令请求（被动响应）
 - `0x9800`: 实时音视频（下行）
   - `0x9801`: 实时音视频请求
