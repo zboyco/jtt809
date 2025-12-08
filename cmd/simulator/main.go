@@ -401,7 +401,7 @@ func sendVehicleRegistration(conn net.Conn, msgSN *uint32) {
 
 	reg := jtt809.VehicleRegistrationUpload{
 		VehicleNo:         *vehicleNo,
-		VehicleColor:      byte(*vehicleColor),
+		VehicleColor:      jtt809.PlateColor(*vehicleColor),
 		PlatformID:        "Platform01",
 		ProducerID:        "Manufacturer",
 		TerminalModelType: "GPS-Model-X1",
@@ -626,7 +626,7 @@ func sendGPSLocation(gps *GPSSimulator) {
 	position := gps.Next()
 	upload := jtt809.VehicleLocationUpload{
 		VehicleNo:    *vehicleNo,
-		VehicleColor: byte(*vehicleColor),
+		VehicleColor: jtt809.PlateColor(*vehicleColor),
 		Position:     position,
 	}
 	pkg, _ := jtt809.EncodePackage(jtt809.Package{
@@ -656,7 +656,7 @@ func sendLocationUpdates(conn net.Conn, msgSN *uint32, interval time.Duration) {
 
 		upload := jtt809.VehicleLocationUpload{
 			VehicleNo:    *vehicleNo,
-			VehicleColor: byte(*vehicleColor),
+			VehicleColor: jtt809.PlateColor(*vehicleColor),
 			Position:     position,
 		}
 

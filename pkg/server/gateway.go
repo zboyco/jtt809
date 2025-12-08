@@ -26,6 +26,8 @@ type JT809Gateway struct {
 	mainSrv *goserver.Server
 	httpSrv *http.Server
 
+	callbacks *Callbacks // 消息回调
+
 	startOnce sync.Once
 }
 
@@ -41,6 +43,11 @@ func NewJT809Gateway(cfg Config) (*JT809Gateway, error) {
 		auth:  NewAuthenticator(cfg.Accounts),
 		store: NewPlatformStore(),
 	}, nil
+}
+
+// SetCallbacks 设置回调函数，用于在收到特定消息时执行自定义业务逻辑
+func (g *JT809Gateway) SetCallbacks(callbacks *Callbacks) {
+	g.callbacks = callbacks
 }
 
 // Start 同时启动主链路、从链路服务，并阻塞直至 ctx 结束。
@@ -191,6 +198,12 @@ func (g *JT809Gateway) handleMainLogin(session *goserver.AppSession, frame *jtt8
 		session.SetAttr("userID", req.UserID)
 		session.SetAttr("link", "main")
 		g.store.BindMainSession(session.ID, req, acc.GnssCenterID, resp.VerifyCode)
+
+		// 触发登录回调
+		if g.callbacks != nil && g.callbacks.OnLogin != nil {
+			go g.callbacks.OnLogin(req.UserID, &req, &resp)
+		}
+
 		// Start Sub Link Connection
 		go g.connectSubLinkWithRetry(req.UserID)
 	}
@@ -498,6 +511,12 @@ func (g *JT809Gateway) handleDynamicInfo(session *goserver.AppSession, frame *jt
 		}
 		g.store.UpdateVehicleRegistration(user, pkt.Color, pkt.Plate, reg)
 		slog.Info("vehicle registration", "user_id", user, "plate", pkt.Plate, "platform", reg.PlatformID)
+
+		// 触发车辆注册回调
+		if g.callbacks != nil && g.callbacks.OnVehicleRegistration != nil {
+			go g.callbacks.OnVehicleRegistration(user, pkt.Plate, pkt.Color, reg)
+		}
+
 		// 自动订阅该车辆的实时定位数据
 		go g.autoSubscribeVehicle(user, pkt.Color, pkt.Plate)
 	case pkt.SubBusinessID == jtt809.SubMsgRealLocation:
@@ -507,8 +526,17 @@ func (g *JT809Gateway) handleDynamicInfo(session *goserver.AppSession, frame *jt
 			return
 		}
 		g.store.UpdateLocation(user, pkt.Color, pkt.Plate, &pos, 0)
+
+		// 触发车辆定位回调
+		var gnssData *jtt809.GNSSData
 		if gnss, err := jtt809.ParseGNSSData(pos.GnssData); err == nil {
-			slog.Info("vehicle location", "user_id", user, "plate", pkt.Plate, "lon", gnss.Longitude, "lat", gnss.Latitude)
+			gnssData = &gnss
+		}
+		if g.callbacks != nil && g.callbacks.OnVehicleLocation != nil {
+			go g.callbacks.OnVehicleLocation(user, pkt.Plate, pkt.Color, &pos, gnssData)
+		}
+		if gnssData != nil {
+			slog.Info("vehicle location", "user_id", user, "plate", pkt.Plate, "lon", gnssData.Longitude, "lat", gnssData.Latitude)
 		} else {
 			slog.Info("vehicle location", "user_id", user, "plate", pkt.Plate, "gnss_len", len(pos.GnssData))
 		}
@@ -538,6 +566,11 @@ func (g *JT809Gateway) handleDynamicInfo(session *goserver.AppSession, frame *jt
 			parsed++
 		}
 		slog.Info("batch vehicle location", "user_id", user, "plate", pkt.Plate, "count", parsed)
+
+		// 触发批量定位回调
+		if g.callbacks != nil && g.callbacks.OnBatchLocation != nil {
+			go g.callbacks.OnBatchLocation(user, pkt.Plate, pkt.Color, parsed)
+		}
 	case pkt.SubBusinessID == jtt809.SubMsgApplyForMonitorStartupAck:
 		ack, err := jtt809.ParseMonitorAck(pkt.Payload)
 		if err != nil {
@@ -550,6 +583,11 @@ func (g *JT809Gateway) handleDynamicInfo(session *goserver.AppSession, frame *jt
 			"source_type", fmt.Sprintf("0x%04X", ack.SourceDataType),
 			"source_sn", ack.SourceMsgSN,
 			"data_length", ack.DataLength)
+
+		// 触发启动车辆定位应答回调
+		if g.callbacks != nil && g.callbacks.OnMonitorStartupAck != nil {
+			go g.callbacks.OnMonitorStartupAck(user, pkt.Plate, pkt.Color)
+		}
 	case pkt.SubBusinessID == jtt809.SubMsgApplyForMonitorEndAck:
 		ack, err := jtt809.ParseMonitorAck(pkt.Payload)
 		if err != nil {
@@ -562,6 +600,11 @@ func (g *JT809Gateway) handleDynamicInfo(session *goserver.AppSession, frame *jt
 			"plate", pkt.Plate,
 			"source_type", fmt.Sprintf("0x%04X", ack.SourceDataType),
 			"source_sn", ack.SourceMsgSN)
+
+		// 触发结束车辆定位应答回调
+		if g.callbacks != nil && g.callbacks.OnMonitorEndAck != nil {
+			go g.callbacks.OnMonitorEndAck(user, pkt.Plate, pkt.Color)
+		}
 	default:
 		slog.Debug("unhandled dynamic sub business", "user_id", user, "sub_id", fmt.Sprintf("0x%04X", pkt.SubBusinessID))
 	}
@@ -609,6 +652,9 @@ func (g *JT809Gateway) handleDynamicInfoFromSub(userID uint32, frame *jtt809.Fra
 		}
 		g.store.UpdateVehicleRegistration(userID, pkt.Color, pkt.Plate, reg)
 		slog.Info("vehicle registration from sub", "user_id", userID, "plate", pkt.Plate, "platform", reg.PlatformID)
+		if g.callbacks != nil && g.callbacks.OnVehicleRegistration != nil {
+			go g.callbacks.OnVehicleRegistration(userID, pkt.Plate, pkt.Color, reg)
+		}
 		go g.autoSubscribeVehicle(userID, pkt.Color, pkt.Plate)
 
 	case pkt.SubBusinessID == jtt809.SubMsgRealLocation:
@@ -618,15 +664,45 @@ func (g *JT809Gateway) handleDynamicInfoFromSub(userID uint32, frame *jtt809.Fra
 			return
 		}
 		g.store.UpdateLocation(userID, pkt.Color, pkt.Plate, &pos, 0)
+		var gnssData *jtt809.GNSSData
 		if gnss, err := jtt809.ParseGNSSData(pos.GnssData); err == nil {
+			gnssData = &gnss
 			slog.Info("vehicle location from sub", "user_id", userID, "plate", pkt.Plate, "lon", gnss.Longitude, "lat", gnss.Latitude)
+		} else {
+			slog.Info("vehicle location from sub", "user_id", userID, "plate", pkt.Plate, "gnss_len", len(pos.GnssData))
+		}
+		if g.callbacks != nil && g.callbacks.OnVehicleLocation != nil {
+			go g.callbacks.OnVehicleLocation(userID, pkt.Plate, pkt.Color, &pos, gnssData)
 		}
 
 	case pkt.SubBusinessID == jtt809.SubMsgBatchLocation:
-		// 批量定位处理逻辑同主链路
-		if len(pkt.Payload) > 0 {
-			count := int(pkt.Payload[0])
-			slog.Info("batch vehicle location from sub", "user_id", userID, "plate", pkt.Plate, "count", count)
+		if len(pkt.Payload) == 0 {
+			return
+		}
+		count := int(pkt.Payload[0])
+		reader := pkt.Payload[1:]
+		parsed := 0
+		for i := 0; i < count && len(reader) >= 5; i++ {
+			gnssLen := int(binary.BigEndian.Uint32(reader[1:5]))
+			totalLen := 1 + 4 + gnssLen + (11+4)*3
+			if gnssLen < 0 || len(reader) < totalLen {
+				break
+			}
+			pos, err := jtt809.ParseVehiclePosition(reader[:totalLen])
+			if err != nil {
+				slog.Warn("parse batch vehicle position failed from sub", "user_id", userID, "index", i, "err", err)
+				break
+			}
+			g.store.UpdateLocation(userID, pkt.Color, pkt.Plate, &pos, count)
+			if gnss, err := jtt809.ParseGNSSData(pos.GnssData); err == nil {
+				slog.Info("batch location item from sub", "user_id", userID, "plate", pkt.Plate, "index", i, "lon", gnss.Longitude, "lat", gnss.Latitude)
+			}
+			reader = reader[totalLen:]
+			parsed++
+		}
+		slog.Info("batch vehicle location from sub", "user_id", userID, "plate", pkt.Plate, "count", parsed)
+		if g.callbacks != nil && g.callbacks.OnBatchLocation != nil {
+			go g.callbacks.OnBatchLocation(userID, pkt.Plate, pkt.Color, parsed)
 		}
 
 	default:
@@ -690,7 +766,12 @@ func (g *JT809Gateway) handleAuthorizeFromSub(userID uint32, frame *jtt809.Frame
 		}
 		authCode := req.AuthorizeCode1
 		g.store.UpdateAuthCode(userID, req.PlatformID, authCode)
-		slog.Info("video authorize report from sub", "user_id", userID, "platform", req.PlatformID, "auth_code", authCode)
+		slog.Info("video authorize report", "user_id", userID, "platform", req.PlatformID, "auth_code", authCode)
+
+		// 触发鉴权回调
+		if g.callbacks != nil && g.callbacks.OnAuthorize != nil {
+			go g.callbacks.OnAuthorize(userID, req.PlatformID, authCode)
+		}
 	}
 }
 
@@ -731,6 +812,15 @@ func (g *JT809Gateway) handleRealTimeVideo(session *goserver.AppSession, frame *
 			ServerPort: ack.ServerPort,
 		})
 		slog.Info("video stream ack", "user_id", user, "plate", pkt.Plate, "server", ack.ServerIP, "port", ack.ServerPort, "result", ack.Result)
+
+		// 触发视频应答回调
+		if g.callbacks != nil && g.callbacks.OnVideoResponse != nil {
+			go g.callbacks.OnVideoResponse(user, pkt.Plate, pkt.Color, &VideoAckState{
+				Result:     ack.Result,
+				ServerIP:   ack.ServerIP,
+				ServerPort: ack.ServerPort,
+			})
+		}
 	}
 }
 
@@ -922,13 +1012,18 @@ func (g *JT809Gateway) handleAuthorize(session *goserver.AppSession, frame *jtt8
 		g.store.UpdateAuthCode(user, req.PlatformID, authCode)
 		slog.Info("video authorize report", "user_id", user, "platform", req.PlatformID, "auth_code", authCode)
 
+		// 触发鉴权回调
+		if g.callbacks != nil && g.callbacks.OnAuthorize != nil {
+			go g.callbacks.OnAuthorize(user, req.PlatformID, authCode)
+		}
+
 	default:
 		slog.Debug("unhandled authorize sub msg", "sub_id", fmt.Sprintf("0x%04X", msg.SubBusinessID))
 	}
 }
 
 // autoSubscribeVehicle 在车辆注册后自动订阅该车辆的实时定位数据
-func (g *JT809Gateway) autoSubscribeVehicle(userID uint32, color byte, vehicle string) {
+func (g *JT809Gateway) autoSubscribeVehicle(userID uint32, color jtt809.PlateColor, vehicle string) {
 	// 等待一小段时间，确保从链路已建立
 	time.Sleep(2 * time.Second)
 

@@ -40,7 +40,7 @@ func (v VehiclePosition) encode() ([]byte, error) {
 // VehicleLocationUpload 表示主链路车辆动态信息交换（0x1200）业务体。
 type VehicleLocationUpload struct {
 	VehicleNo    string
-	VehicleColor byte
+	VehicleColor PlateColor
 	Position     *VehiclePosition
 }
 
@@ -60,7 +60,7 @@ func (v VehicleLocationUpload) Encode() ([]byte, error) {
 
 	var buf bytes.Buffer
 	buf.Write(PadRightGBK(v.VehicleNo, 21))
-	buf.WriteByte(v.VehicleColor)
+	buf.WriteByte(byte(v.VehicleColor))
 
 	const subMsgID uint16 = 0x1202
 	_ = binary.Write(&buf, binary.BigEndian, subMsgID)

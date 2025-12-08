@@ -47,7 +47,7 @@ type PlatformState struct {
 // VehicleState 保存车辆注册信息、最新定位与最后一次视频应答。
 type VehicleState struct {
 	Number string
-	Color  byte
+	Color  jtt809.PlateColor
 
 	Registration *VehicleRegistration
 
@@ -97,7 +97,7 @@ type PlatformSnapshot struct {
 // VehicleSnapshot 为单车数据提供可序列化视图。
 type VehicleSnapshot struct {
 	VehicleNo    string                  `json:"vehicle_no"`
-	VehicleColor byte                    `json:"vehicle_color"`
+	VehicleColor jtt809.PlateColor       `json:"vehicle_color"`
 	Registration *VehicleRegistration    `json:"registration,omitempty"`
 	Position     *jtt809.VehiclePosition `json:"location,omitempty"`
 	PositionTime time.Time               `json:"location_time,omitempty"`
@@ -189,7 +189,7 @@ func (s *PlatformStore) RemoveSession(sessionID string) {
 }
 
 // UpdateVehicleRegistration 存储车辆注册信息。
-func (s *PlatformStore) UpdateVehicleRegistration(userID uint32, color byte, vehicle string, reg *VehicleRegistration) {
+func (s *PlatformStore) UpdateVehicleRegistration(userID uint32, color jtt809.PlateColor, vehicle string, reg *VehicleRegistration) {
 	if reg == nil {
 		return
 	}
@@ -202,7 +202,7 @@ func (s *PlatformStore) UpdateVehicleRegistration(userID uint32, color byte, veh
 }
 
 // UpdateLocation 写入最新定位数据。
-func (s *PlatformStore) UpdateLocation(userID uint32, color byte, vehicle string, pos *jtt809.VehiclePosition, batchCount int) {
+func (s *PlatformStore) UpdateLocation(userID uint32, color jtt809.PlateColor, vehicle string, pos *jtt809.VehiclePosition, batchCount int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	state := s.ensurePlatformLocked(userID)
@@ -218,7 +218,7 @@ func (s *PlatformStore) UpdateLocation(userID uint32, color byte, vehicle string
 }
 
 // RecordVideoAck 缓存最新视频流地址。
-func (s *PlatformStore) RecordVideoAck(userID uint32, color byte, vehicle string, ack *VideoAckState) {
+func (s *PlatformStore) RecordVideoAck(userID uint32, color jtt809.PlateColor, vehicle string, ack *VideoAckState) {
 	if ack == nil {
 		return
 	}
@@ -378,7 +378,7 @@ func (s *PlatformStore) ensurePlatformLocked(userID uint32) *PlatformState {
 	return state
 }
 
-func (state *PlatformState) ensureVehicleLocked(key string, number string, color byte) *VehicleState {
+func (state *PlatformState) ensureVehicleLocked(key string, number string, color jtt809.PlateColor) *VehicleState {
 	v, ok := state.Vehicles[key]
 	if ok {
 		return v
@@ -446,6 +446,6 @@ func (state *PlatformState) snapshotLocked() PlatformSnapshot {
 	return snap
 }
 
-func vehicleKey(no string, color byte) string {
+func vehicleKey(no string, color jtt809.PlateColor) string {
 	return fmt.Sprintf("%s#%d", no, color)
 }

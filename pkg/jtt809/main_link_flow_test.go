@@ -79,7 +79,7 @@ func TestMainLinkHandleRealTimeLocation(t *testing.T) {
 	}
 	body := VehicleLocationUpload{
 		VehicleNo:    "粤A12345",
-		VehicleColor: VehicleColorBlue,
+		VehicleColor: PlateColorBlue,
 		Position:     pos,
 	}
 	pkt, err := EncodePackage(Package{Header: Header{GNSSCenterID: 99}, Body: body})

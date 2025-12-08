@@ -10,10 +10,10 @@ import (
 
 // MonitorRequest 表示车辆定位信息交换请求（订阅/取消订阅车辆GPS）。
 type MonitorRequest struct {
-	UserID       uint32 `json:"user_id"`
-	VehicleNo    string `json:"vehicle_no"`
-	VehicleColor byte   `json:"vehicle_color"`
-	ReasonCode   byte   `json:"reason_code"` // 0=进入区域,1=人工指定,2=应急,3=其它
+	UserID       uint32            `json:"user_id"`
+	VehicleNo    string            `json:"vehicle_no"`
+	VehicleColor jtt809.PlateColor `json:"vehicle_color"`
+	ReasonCode   byte              `json:"reason_code"` // 0=进入区域,1=人工指定,2=应急,3=其它
 }
 
 // RequestMonitorStartup 通过从链路向下级平台发送启动车辆定位信息交换请求。
@@ -22,7 +22,7 @@ func (g *JT809Gateway) RequestMonitorStartup(req MonitorRequest) error {
 		return errors.New("vehicle_no is required")
 	}
 	if req.VehicleColor == 0 {
-		req.VehicleColor = jtt809.VehicleColorBlue
+		req.VehicleColor = jtt809.PlateColorBlue
 	}
 	return g.sendMonitorRequest(req, true)
 }
@@ -33,7 +33,7 @@ func (g *JT809Gateway) RequestMonitorEnd(req MonitorRequest) error {
 		return errors.New("vehicle_no is required")
 	}
 	if req.VehicleColor == 0 {
-		req.VehicleColor = jtt809.VehicleColorBlue
+		req.VehicleColor = jtt809.PlateColorBlue
 	}
 	return g.sendMonitorRequest(req, false)
 }

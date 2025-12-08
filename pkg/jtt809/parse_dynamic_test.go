@@ -30,7 +30,7 @@ func TestParsePlatformQueryAck(t *testing.T) {
 
 	pkt := &SubBusinessPacket{
 		Plate:         "TEST",
-		Color:         VehicleColorBlue,
+		Color:         PlateColorBlue,
 		SubBusinessID: SubMsgPlatformQueryAck,
 		Payload:       payload,
 		PayloadLength: uint32(len(payload)),

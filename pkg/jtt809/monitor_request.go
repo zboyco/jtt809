@@ -9,7 +9,7 @@ import (
 // ApplyForMonitorStartup 启动车辆定位信息交换请求 (0x9200/0x9205)
 type ApplyForMonitorStartup struct {
 	VehicleNo    string
-	VehicleColor byte
+	VehicleColor PlateColor
 	ReasonCode   MonitorReasonCode
 }
 
@@ -18,7 +18,7 @@ func (ApplyForMonitorStartup) MsgID() uint16 { return MsgIDDownExgMsg }
 func (a ApplyForMonitorStartup) Encode() ([]byte, error) {
 	var buf bytes.Buffer
 	buf.Write(PadRightGBK(a.VehicleNo, 21))
-	buf.WriteByte(a.VehicleColor)
+	buf.WriteByte(byte(a.VehicleColor))
 	_ = binary.Write(&buf, binary.BigEndian, SubMsgApplyForMonitorStartup)
 	_ = binary.Write(&buf, binary.BigEndian, uint32(1)) // 数据长度=1
 	buf.WriteByte(byte(a.ReasonCode))
@@ -28,7 +28,7 @@ func (a ApplyForMonitorStartup) Encode() ([]byte, error) {
 // ApplyForMonitorEnd 结束车辆定位信息交换请求 (0x9200/0x9206)
 type ApplyForMonitorEnd struct {
 	VehicleNo    string
-	VehicleColor byte
+	VehicleColor PlateColor
 	ReasonCode   MonitorReasonCode
 }
 
@@ -37,7 +37,7 @@ func (ApplyForMonitorEnd) MsgID() uint16 { return MsgIDDownExgMsg }
 func (a ApplyForMonitorEnd) Encode() ([]byte, error) {
 	var buf bytes.Buffer
 	buf.Write(PadRightGBK(a.VehicleNo, 21))
-	buf.WriteByte(a.VehicleColor)
+	buf.WriteByte(byte(a.VehicleColor))
 	_ = binary.Write(&buf, binary.BigEndian, SubMsgApplyForMonitorEnd)
 	_ = binary.Write(&buf, binary.BigEndian, uint32(1)) // 数据长度=1
 	buf.WriteByte(byte(a.ReasonCode))

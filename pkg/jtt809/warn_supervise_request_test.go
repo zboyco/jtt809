@@ -8,17 +8,17 @@ import (
 
 func TestWarnSuperviseRequestEncode(t *testing.T) {
 	req := WarnSuperviseRequest{
-		VehicleNo:        "粤A12345",
-		VehicleColor:     VehicleColorBlue,
-		WarnSource:       WarnSrcVehicle,
-		WarnType:         WarnTypeFatigueDriving,
-		WarnTime:         time.Date(2018, 9, 27, 10, 24, 0, 0, time.UTC),
-		SupervisionID:    "123FFAA1",
-		EndTime:          time.Date(2018, 9, 27, 11, 24, 0, 0, time.UTC),
-		Level:            SupervisionLevelNormal,
-		Supervisor:       "smallchi",
-		SupervisorTel:    "12345678901",
-		SupervisorEmail:  "123456@qq.com",
+		VehicleNo:       "粤A12345",
+		VehicleColor:    PlateColorBlue,
+		WarnSource:      WarnSrcVehicle,
+		WarnType:        WarnTypeFatigueDriving,
+		WarnTime:        time.Date(2018, 9, 27, 10, 24, 0, 0, time.UTC),
+		SupervisionID:   "123FFAA1",
+		EndTime:         time.Date(2018, 9, 27, 11, 24, 0, 0, time.UTC),
+		Level:           SupervisionLevelNormal,
+		Supervisor:      "smallchi",
+		SupervisorTel:   "12345678901",
+		SupervisorEmail: "123456@qq.com",
 	}
 	data, err := EncodePackage(Package{Header: Header{GNSSCenterID: 0x1357}, Body: req})
 	if err != nil {

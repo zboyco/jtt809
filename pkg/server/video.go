@@ -15,12 +15,12 @@ import (
 
 // VideoRequest 表示向下级平台下发的实时音视频请求。
 type VideoRequest struct {
-	UserID       uint32 `json:"user_id"`
-	VehicleNo    string `json:"vehicle_no"`
-	VehicleColor byte   `json:"vehicle_color"`
-	ChannelID    byte   `json:"channel_id"`
-	AVItemType   byte   `json:"av_item_type"`
-	GnssHex      string `json:"gnss_hex,omitempty"`
+	UserID       uint32            `json:"user_id"`
+	VehicleNo    string            `json:"vehicle_no"`
+	VehicleColor jtt809.PlateColor `json:"vehicle_color"`
+	ChannelID    byte              `json:"channel_id"`
+	AVItemType   byte              `json:"av_item_type"`
+	GnssHex      string            `json:"gnss_hex,omitempty"`
 }
 
 // RequestVideoStream 通过从链路向下级平台发送实时视频请求（0x9801 下行实时音视频）。
@@ -32,7 +32,7 @@ func (g *JT809Gateway) RequestVideoStream(req VideoRequest) error {
 		return errors.New("vehicle_no is required")
 	}
 	if req.VehicleColor == 0 {
-		req.VehicleColor = jtt809.VehicleColorBlue
+		req.VehicleColor = jtt809.PlateColorBlue
 	}
 	_, authCode := g.store.GetAuthCode(req.UserID)
 	if authCode == "" {
@@ -124,7 +124,7 @@ func (r rawBody) Encode() ([]byte, error) {
 	return r.payload, nil
 }
 
-func buildSubBusinessBody(plate string, color byte, subID uint16, payload []byte) ([]byte, error) {
+func buildSubBusinessBody(plate string, color jtt809.PlateColor, subID uint16, payload []byte) ([]byte, error) {
 	plateBytes, err := jtt809.EncodeGBK(plate)
 	if err != nil {
 		return nil, fmt.Errorf("encode plate: %w", err)
@@ -133,7 +133,7 @@ func buildSubBusinessBody(plate string, color byte, subID uint16, payload []byte
 	field := make([]byte, 21)
 	copy(field, plateBytes)
 	buf = append(buf, field...)
-	buf = append(buf, color)
+	buf = append(buf, byte(color))
 	var tmp [2]byte
 	binary.BigEndian.PutUint16(tmp[:], subID)
 	buf = append(buf, tmp[:]...)

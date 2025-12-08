@@ -11,7 +11,7 @@ import (
 // VehicleRegistrationUpload 表示主链路上传车辆注册信息（0x1200 子业务 0x1201）。
 type VehicleRegistrationUpload struct {
 	VehicleNo    string
-	VehicleColor byte
+	VehicleColor PlateColor
 
 	PlatformID        string // 11 字节
 	ProducerID        string // 11 字节
@@ -34,7 +34,7 @@ func (v VehicleRegistrationUpload) Encode() ([]byte, error) {
 	}
 	var buf bytes.Buffer
 	buf.Write(PadRightGBK(v.VehicleNo, 21)) // 使用 GBK 编码
-	buf.WriteByte(v.VehicleColor)
+	buf.WriteByte(byte(v.VehicleColor))
 
 	const subMsgID uint16 = SubMsgUploadVehicleReg
 	_ = binary.Write(&buf, binary.BigEndian, subMsgID)

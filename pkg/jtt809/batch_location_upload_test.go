@@ -15,7 +15,7 @@ func TestBatchLocationUploadEncode(t *testing.T) {
 	}
 	body := BatchLocationUpload{
 		VehicleNo:    "粤B00001",
-		VehicleColor: VehicleColorYellow,
+		VehicleColor: PlateColorYellow,
 		Locations: []BatchLocationRecord{
 			{Position: pos},
 			{Position: pos},

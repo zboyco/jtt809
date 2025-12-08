@@ -85,7 +85,7 @@ func (g *JT809Gateway) handleVideoRequest(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if req.VehicleColor == 0 {
-		req.VehicleColor = jtt809.VehicleColorBlue
+		req.VehicleColor = jtt809.PlateColorBlue
 	}
 
 	if err := g.RequestVideoStream(req); err != nil {

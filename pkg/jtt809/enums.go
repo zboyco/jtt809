@@ -1,17 +1,20 @@
 package jtt809
 
-// VehicleColor 表示车辆颜色编码，参考 JT/T 809-2019 车辆颜色类型。
+// PlateColor 表示车牌颜色类型（JT/T 809-2019）
+type PlateColor byte
+
+// 车牌颜色常量定义
 const (
-	VehicleColorBlue          byte = 0x01 // 蓝色
-	VehicleColorYellow        byte = 0x02 // 黄色
-	VehicleColorBlack         byte = 0x03 // 黑色
-	VehicleColorWhite         byte = 0x04 // 白色
-	VehicleColorGreen         byte = 0x05 // 绿色
-	VehicleColorOther         byte = 0x09 // 其他
-	VehicleColorAgriYellow    byte = 0x91 // 农黄色
-	VehicleColorYellowGreen   byte = 0x93 // 黄绿色
-	VehicleColorAgriGreen     byte = 0x92 // 农绿色
-	VehicleColorGradientGreen byte = 0x94 // 渐变绿
+	PlateColorBlue          PlateColor = 0x01 // 蓝色
+	PlateColorYellow        PlateColor = 0x02 // 黄色
+	PlateColorBlack         PlateColor = 0x03 // 黑色
+	PlateColorWhite         PlateColor = 0x04 // 白色
+	PlateColorGreen         PlateColor = 0x05 // 绿色
+	PlateColorOther         PlateColor = 0x09 // 其他
+	PlateColorAgriYellow    PlateColor = 0x91 // 农黄色
+	PlateColorYellowGreen   PlateColor = 0x93 // 黄绿色
+	PlateColorAgriGreen     PlateColor = 0x92 // 农绿色
+	PlateColorGradientGreen PlateColor = 0x94 // 渐变绿
 )
 
 // SubBusinessType 定义子业务数据类型，截取常用值以支持定位、查岗等业务。
@@ -31,7 +34,7 @@ const (
 	SubMsgApplyForMonitorEndAck     uint16 = 0x1206 // 结束车辆定位信息交换应答
 
 	// JT/T 1078-2016 子业务
-	SubMsgAuthorizeStartupReq     uint16 = 0x1701 // 时效口令上报消息 (UP_AUTHORIZE_MSG_STARTUP)
+	SubMsgAuthorizeStartupReq         uint16 = 0x1701 // 时效口令上报消息 (UP_AUTHORIZE_MSG_STARTUP)
 	SubMsgRealTimeVideoStartupAck     uint16 = 0x1801 // 实时音视频请求应答消息 (UP_REALVIDEO_MSG_STARTUP_ACK)
 	SubMsgDownRealTimeVideoStartupReq uint16 = 0x9801 // 实时音视频请求消息 (DOWN_REALVIDEO_MSG_STARTUP)
 )

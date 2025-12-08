@@ -10,7 +10,7 @@ import (
 type DynamicInfo struct {
 	Plate         string
 	PlateRaw      []byte
-	Color         byte
+	Color         PlateColor
 	SubBusinessID uint16
 	PayloadLength uint32
 	Payload       []byte
@@ -36,7 +36,7 @@ func ParseMainDynamic(body []byte) (*DynamicInfo, error) {
 type SubBusinessPacket struct {
 	Plate         string
 	PlateRaw      []byte
-	Color         byte
+	Color         PlateColor
 	SubBusinessID uint16
 	PayloadLength uint32
 	Payload       []byte
@@ -49,7 +49,7 @@ func ParseSubBusiness(body []byte) (*SubBusinessPacket, error) {
 	}
 	plateRaw := make([]byte, 21)
 	copy(plateRaw, body[:21])
-	color := body[21]
+	color := PlateColor(body[21])
 	sub := binary.BigEndian.Uint16(body[22:24])
 	length := binary.BigEndian.Uint32(body[24:28])
 	if int(length) != len(body[28:]) {

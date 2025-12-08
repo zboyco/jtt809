@@ -11,7 +11,7 @@ import (
 // WarnSuperviseRequest 表示报警督办请求子业务（0x9401），下发给车属平台。
 type WarnSuperviseRequest struct {
 	VehicleNo    string
-	VehicleColor byte
+	VehicleColor PlateColor
 
 	WarnSource      WarnSrc
 	WarnType        WarnType
@@ -37,7 +37,7 @@ func (w WarnSuperviseRequest) Encode() ([]byte, error) {
 	}
 	var buf bytes.Buffer
 	buf.Write(PadRightGBK(w.VehicleNo, 21))
-	buf.WriteByte(w.VehicleColor)
+	buf.WriteByte(byte(w.VehicleColor))
 	_ = binary.Write(&buf, binary.BigEndian, SubMsgWarnSuperviseReq)
 	_ = binary.Write(&buf, binary.BigEndian, uint32(len(body)))
 	buf.Write(body)

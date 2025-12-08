@@ -52,7 +52,7 @@ func TestVehicleLocationUploadEncode(t *testing.T) {
 func TestVehicleLocationUploadRequirePosition(t *testing.T) {
 	body := VehicleLocationUpload{
 		VehicleNo:    "粤B00001",
-		VehicleColor: VehicleColorBlue,
+		VehicleColor: PlateColorBlue,
 	}
 	if _, err := body.Encode(); err == nil {
 		t.Fatalf("expected encode error when position is missing")

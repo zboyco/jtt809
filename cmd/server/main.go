@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/zboyco/jtt809/pkg/jtt809"
 	"github.com/zboyco/jtt809/pkg/server"
 )
 
@@ -27,6 +28,83 @@ func main() {
 		fmt.Fprintf(os.Stderr, "init gateway: %v\n", err)
 		os.Exit(2)
 	}
+
+	// 设置回调函数，用于处理各类消息
+	gateway.SetCallbacks(&server.Callbacks{
+		OnLogin: func(userID uint32, req *jtt809.LoginRequest, resp *jtt809.LoginResponse) {
+			slog.Info("【业务回调】平台登录",
+				"user_id", userID,
+				"result", resp.Result,
+				"down_link", fmt.Sprintf("%s:%d", req.DownLinkIP, req.DownLinkPort))
+			// 在这里可以执行业务逻辑，如：
+			// - 记录登录日志到数据库
+			// - 发送登录通知
+			// - 更新平台在线状态
+		},
+		OnVehicleRegistration: func(userID uint32, plate string, color jtt809.PlateColor, reg *server.VehicleRegistration) {
+			slog.Info("【业务回调】车辆注册",
+				"user_id", userID,
+				"plate", plate,
+				"color", color,
+				"terminal_id", reg.TerminalID)
+			// 在这里可以执行业务逻辑，如：
+			// - 保存车辆注册信息到数据库
+			// - 更新车辆档案
+			// - 发送注册通知
+		},
+		OnVehicleLocation: func(userID uint32, plate string, color jtt809.PlateColor, pos *jtt809.VehiclePosition, gnss *jtt809.GNSSData) {
+			if gnss != nil {
+				slog.Info("【业务回调】车辆定位",
+					"user_id", userID,
+					"plate", plate,
+					"lon", gnss.Longitude,
+					"lat", gnss.Latitude,
+					"speed", gnss.Speed)
+			}
+			// 在这里可以执行业务逻辑，如：
+			// - 存储定位数据到时序数据库
+			// - 触发地理围栏判断
+			// - 更新车辆实时位置
+		},
+		OnBatchLocation: func(userID uint32, plate string, color jtt809.PlateColor, count int) {
+			slog.Info("【业务回调】批量定位",
+				"user_id", userID,
+				"plate", plate,
+				"count", count)
+			// 批量定位数据处理
+		},
+		OnVideoResponse: func(userID uint32, plate string, color jtt809.PlateColor, videoAck *server.VideoAckState) {
+			slog.Info("【业务回调】视频应答",
+				"user_id", userID,
+				"plate", plate,
+				"server", fmt.Sprintf("%s:%d", videoAck.ServerIP, videoAck.ServerPort),
+				"result", videoAck.Result)
+			// 在这里可以执行业务逻辑，如：
+			// - 保存视频流地址
+			// - 通知前端更新视频播放器
+		},
+		OnAuthorize: func(userID uint32, platformID string, authorizeCode string) {
+			slog.Info("【业务回调】视频鉴权",
+				"user_id", userID,
+				"platform_id", platformID,
+				"auth_code", authorizeCode)
+			// 在这里可以执行业务逻辑，如：
+			// - 保存授权码
+			// - 更新鉴权状态
+		},
+		OnMonitorStartupAck: func(userID uint32, plate string, color jtt809.PlateColor) {
+			slog.Info("【业务回调】车辆监控开启应答",
+				"user_id", userID,
+				"plate", plate,
+				"color", color)
+		},
+		OnMonitorEndAck: func(userID uint32, plate string, color jtt809.PlateColor) {
+			slog.Info("【业务回调】车辆监控结束应答",
+				"user_id", userID,
+				"plate", plate,
+				"color", color)
+		},
+	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

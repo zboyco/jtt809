@@ -8,7 +8,7 @@ import (
 func TestVehicleRegistrationUploadEncode(t *testing.T) {
 	body := VehicleRegistrationUpload{
 		VehicleNo:         "粤A12345",
-		VehicleColor:      VehicleColorBlue,
+		VehicleColor:      PlateColorBlue,
 		PlatformID:        "1111111111",
 		ProducerID:        "1111111111",
 		TerminalModelType: "11111111",

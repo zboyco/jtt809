@@ -15,7 +15,7 @@ type BatchLocationRecord struct {
 // 按规范单包 GNSSCount 建议 1-5 条。
 type BatchLocationUpload struct {
 	VehicleNo    string
-	VehicleColor byte
+	VehicleColor PlateColor
 	Locations    []BatchLocationRecord
 }
 
@@ -49,7 +49,7 @@ func (v BatchLocationUpload) Encode() ([]byte, error) {
 	// 这里我们需要重新构建 buffer 以符合这种结构
 	var finalBuf bytes.Buffer
 	finalBuf.Write(PadRightGBK(v.VehicleNo, 21))
-	finalBuf.WriteByte(v.VehicleColor)
+	finalBuf.WriteByte(byte(v.VehicleColor))
 	finalBuf.Write(buf.Bytes())
 
 	const subMsgID uint16 = SubMsgBatchLocation
