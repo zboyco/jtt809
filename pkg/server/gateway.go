@@ -129,6 +129,7 @@ func (g *JT809Gateway) handleMainMessage(session *goserver.AppSession, payload [
 }
 
 // handleSubMessage 处理从链路报文（Active Mode）。
+// 正常情况下从链路用于接收应答，但当主链路断开时，下级平台可能通过从链路发送请求。
 func (g *JT809Gateway) handleSubMessage(userID uint32, payload []byte) {
 	g.logPacket("sub", "recv", fmt.Sprintf("%d", userID), payload)
 	frame, err := jtt809.DecodeFrame(payload)
@@ -136,17 +137,43 @@ func (g *JT809Gateway) handleSubMessage(userID uint32, payload []byte) {
 		slog.Warn("decode sub frame failed", "user_id", userID, "err", err)
 		return
 	}
+
 	switch frame.BodyID {
 	case jtt809.MsgIDDownlinkConnReq:
-		// Active mode: we send this, we don't receive it (unless echo? no)
+		// Active mode: we send this, we don't receive it
+		slog.Debug("received sub link login request on sub link", "user_id", userID)
+
 	case 0x9002: // Login Response
 		// Handled in connectSubLink
+		slog.Debug("received sub link login response", "user_id", userID)
+
 	case 0x9006: // Heartbeat Response
-		// Just log or update heartbeat time
+		// 从链路心跳应答，记录心跳时间
 		g.store.RecordHeartbeat(userID, false)
+
+	case jtt809.MsgIDDynamicInfo:
+		// 主链路断开时，下级平台可能通过从链路上报车辆数据
+		slog.Info("sub link received dynamic info (main link may be down)", "user_id", userID)
+		g.handleDynamicInfoFromSub(userID, frame)
+
+	case jtt809.MsgIDPlatformInfo:
+		// 平台信息查询
+		slog.Info("sub link received platform info (main link may be down)", "user_id", userID)
+		g.handlePlatformInfoFromSub(userID, frame)
+
+	case jtt809.MsgIDRealTimeVideo:
+		// 实时视频应答
+		slog.Info("sub link received real time video response", "user_id", userID)
+		g.handleRealTimeVideoFromSub(userID, frame)
+
+	case jtt809.MsgIDAuthorize:
+		// 鉴权消息
+		slog.Info("sub link received authorize msg (main link may be down)", "user_id", userID)
+		g.handleAuthorizeFromSub(userID, frame)
+
 	case 0x9007: // Disconnect Notify
-		// Server disconnected us?
 		slog.Warn("sub link disconnect notify", "user_id", userID)
+
 	default:
 		slog.Debug("unhandled sub message", "user_id", userID, "msg_id", fmt.Sprintf("0x%04X", frame.BodyID))
 	}
@@ -167,6 +194,7 @@ func (g *JT809Gateway) handleMainLogin(session *goserver.AppSession, frame *jtt8
 		// Start Sub Link Connection
 		go g.connectSubLinkWithRetry(req.UserID)
 	}
+	// 主链路登录应答应该在主链路返回（使用相同链路）
 	return g.simpleResponse(session, "main", frame, resp)
 }
 
@@ -328,10 +356,27 @@ func (g *JT809Gateway) healthCheckLoop(ctx context.Context) {
 
 func (g *JT809Gateway) checkConnections() {
 	snapshots := g.store.Snapshots()
+	now := time.Now()
+
 	for _, snap := range snapshots {
+		// 检查主链路断开超时情况
+		if snap.MainSessionID == "" && snap.SubConnected && !snap.MainDisconnectedAt.IsZero() {
+			// 主链路断开超过5分钟，关闭从链路以释放资源
+			if now.Sub(snap.MainDisconnectedAt) > 5*time.Minute {
+				slog.Warn("main link disconnected timeout, closing sub link",
+					"user_id", snap.UserID,
+					"disconnected_duration", now.Sub(snap.MainDisconnectedAt))
+				g.store.CloseSubLink(snap.UserID)
+			}
+			// 主链路断开但还未超时，从链路保持
+			continue
+		}
+
+		// 主链路正常的情况
 		if snap.MainSessionID == "" {
 			continue
 		}
+
 		// 检查从链路是否需要重连
 		if !snap.SubConnected && snap.DownLinkIP != "" && snap.DownLinkPort > 0 {
 			slog.Warn("sub link disconnected, triggering reconnect", "user_id", snap.UserID)
@@ -369,18 +414,30 @@ func (g *JT809Gateway) keepAliveSubLink(c *client.SimpleClient, userID uint32) {
 }
 
 func (g *JT809Gateway) handleHeartbeat(session *goserver.AppSession, frame *jtt809.Frame, isMain bool) ([]byte, error) {
-	if user, ok := g.sessionUser(session); ok {
-		g.store.RecordHeartbeat(user, isMain)
-		if isMain {
-			slog.Info("main link heartbeat", "session", session.ID, "user_id", user)
-		} else {
-			slog.Info("sub link heartbeat", "session", session.ID, "user_id", user)
-		}
+	user, ok := g.sessionUser(session)
+	if !ok {
+		slog.Warn("heartbeat before login", "session", session.ID)
+		return nil, nil
 	}
+
+	g.store.RecordHeartbeat(user, isMain)
+
 	if isMain {
-		return g.simpleResponse(session, "main", frame, jtt809.HeartbeatResponse{})
+		// 主链路收到心跳请求，应答应该通过从链路发送（支持降级到主链路）
+		slog.Info("main link heartbeat", "session", session.ID, "user_id", user)
+		resp := jtt809.HeartbeatResponse{}
+		if err := g.sendResponseOnLink(true, user, frame, resp); err != nil {
+			slog.Error("send heartbeat response failed", "user_id", user, "err", err)
+			// 发送失败，返回nil避免go-server框架再次发送
+			return nil, nil
+		}
+		// 已通过 sendResponseOnLink 发送，返回 nil 避免重复发送
+		return nil, nil
+	} else {
+		// 从链路收到心跳请求（理论上不应该发生，因为我们是主动连接方）
+		slog.Info("sub link heartbeat", "session", session.ID, "user_id", user)
+		return g.simpleResponse(session, "sub", frame, jtt809.SubLinkHeartbeatResponse{})
 	}
-	return g.simpleResponse(session, "sub", frame, jtt809.SubLinkHeartbeatResponse{})
 }
 
 func (g *JT809Gateway) handleDynamicInfo(session *goserver.AppSession, frame *jtt809.Frame) {
@@ -498,6 +555,115 @@ func (g *JT809Gateway) handlePlatformInfo(session *goserver.AppSession, frame *j
 	slog.Debug("unhandled platform info sub", "sub_id", fmt.Sprintf("0x%04X", pkt.SubBusinessID))
 }
 
+// handleDynamicInfoFromSub 处理从链路收到的动态信息（主链路断开时的降级场景）
+func (g *JT809Gateway) handleDynamicInfoFromSub(userID uint32, frame *jtt809.Frame) {
+	pkt, err := jtt809.ParseSubBusiness(frame.RawBody)
+	if err != nil {
+		slog.Warn("parse sub business failed from sub link", "user_id", userID, "err", err)
+		return
+	}
+	switch {
+	case pkt.SubBusinessID == jtt809.SubMsgUploadVehicleReg:
+		info, err := jtt809.ParseVehicleRegistration(pkt.Payload)
+		if err != nil {
+			slog.Warn("parse vehicle registration failed from sub", "user_id", userID, "err", err)
+			return
+		}
+		reg := &VehicleRegistration{
+			PlatformID:        info.PlatformID,
+			ProducerID:        info.ProducerID,
+			TerminalModelType: info.TerminalModelType,
+			IMEI:              info.IMEI,
+			TerminalID:        info.TerminalID,
+			TerminalSIM:       info.TerminalSIM,
+		}
+		g.store.UpdateVehicleRegistration(userID, pkt.Color, pkt.Plate, reg)
+		slog.Info("vehicle registration from sub", "user_id", userID, "plate", pkt.Plate, "platform", reg.PlatformID)
+		go g.autoSubscribeVehicle(userID, pkt.Color, pkt.Plate)
+
+	case pkt.SubBusinessID == jtt809.SubMsgRealLocation:
+		pos, err := jtt809.ParseVehiclePosition(pkt.Payload)
+		if err != nil {
+			slog.Warn("parse vehicle position failed from sub", "user_id", userID, "err", err)
+			return
+		}
+		g.store.UpdateLocation(userID, pkt.Color, pkt.Plate, &pos, 0)
+		if gnss, err := jtt809.ParseGNSSData(pos.GnssData); err == nil {
+			slog.Info("vehicle location from sub", "user_id", userID, "plate", pkt.Plate, "lon", gnss.Longitude, "lat", gnss.Latitude)
+		}
+
+	case pkt.SubBusinessID == jtt809.SubMsgBatchLocation:
+		// 批量定位处理逻辑同主链路
+		if len(pkt.Payload) > 0 {
+			count := int(pkt.Payload[0])
+			slog.Info("batch vehicle location from sub", "user_id", userID, "plate", pkt.Plate, "count", count)
+		}
+
+	default:
+		slog.Debug("unhandled dynamic sub business from sub", "user_id", userID, "sub_id", fmt.Sprintf("0x%04X", pkt.SubBusinessID))
+	}
+}
+
+// handlePlatformInfoFromSub 处理从链路收到的平台信息
+func (g *JT809Gateway) handlePlatformInfoFromSub(userID uint32, frame *jtt809.Frame) {
+	pkt, err := jtt809.ParseSubBusiness(frame.RawBody)
+	if err != nil {
+		slog.Warn("parse platform info failed from sub", "user_id", userID, "err", err)
+		return
+	}
+	if pkt.SubBusinessID == jtt809.SubMsgPlatformQueryAck {
+		ack, err := jtt809.ParsePlatformQueryAck(pkt)
+		if err != nil {
+			slog.Warn("parse platform query ack failed from sub", "user_id", userID, "err", err)
+			return
+		}
+		slog.Info("platform query ack from sub", "user_id", userID, "object", ack.ObjectID, "info", ack.InfoContent)
+		return
+	}
+	slog.Debug("unhandled platform info sub from sub", "user_id", userID, "sub_id", fmt.Sprintf("0x%04X", pkt.SubBusinessID))
+}
+
+// handleRealTimeVideoFromSub 处理从链路收到的实时视频应答
+func (g *JT809Gateway) handleRealTimeVideoFromSub(userID uint32, frame *jtt809.Frame) {
+	pkt, err := jtt809.ParseSubBusiness(frame.RawBody)
+	if err != nil {
+		slog.Warn("parse sub business failed from sub", "user_id", userID, "err", err)
+		return
+	}
+	if pkt.SubBusinessID == jtt809.SubMsgRealTimeVideoStartupAck {
+		ack, err := jt1078.ParseRealTimeVideoStartupAck(pkt.Payload)
+		if err != nil {
+			slog.Warn("parse video ack failed from sub", "user_id", userID, "err", err)
+			return
+		}
+		g.store.RecordVideoAck(userID, pkt.Color, pkt.Plate, &VideoAckState{
+			Result:     ack.Result,
+			ServerIP:   ack.ServerIP,
+			ServerPort: ack.ServerPort,
+		})
+		slog.Info("video stream ack from sub", "user_id", userID, "plate", pkt.Plate, "server", ack.ServerIP, "port", ack.ServerPort, "result", ack.Result)
+	}
+}
+
+// handleAuthorizeFromSub 处理从链路收到的鉴权消息
+func (g *JT809Gateway) handleAuthorizeFromSub(userID uint32, frame *jtt809.Frame) {
+	msg, err := jt1078.ParseAuthorizeMsg(frame.RawBody)
+	if err != nil {
+		slog.Warn("parse authorize msg failed from sub", "user_id", userID, "err", err)
+		return
+	}
+	if msg.SubBusinessID == jtt809.SubMsgAuthorizeStartupReq {
+		req, err := jt1078.ParseAuthorizeStartupReq(msg.Payload)
+		if err != nil {
+			slog.Warn("parse authorize startup req failed from sub", "user_id", userID, "err", err)
+			return
+		}
+		authCode := req.AuthorizeCode1
+		g.store.UpdateAuthCode(userID, req.PlatformID, authCode)
+		slog.Info("video authorize report from sub", "user_id", userID, "platform", req.PlatformID, "auth_code", authCode)
+	}
+}
+
 func (g *JT809Gateway) handleAlarmInteract(session *goserver.AppSession, frame *jtt809.Frame) {
 	// 忽略主链路 0x1400 上报的报警数据，不用解析
 	slog.Debug("ignored alarm interact message", "session", session.ID, "msg_id", fmt.Sprintf("0x%04X", frame.BodyID))
@@ -545,6 +711,101 @@ func (g *JT809Gateway) handleSubDisconnect(session *goserver.AppSession, frame *
 		return
 	}
 	slog.Warn("sub link disconnect", "session", session.ID, "reason", notify.ReasonCode)
+}
+
+// shouldUseSameLink 判断响应是否应该使用与请求相同的链路
+// 返回 true 表示使用相同链路（如登录消息）
+// 返回 false 表示使用相反链路
+func shouldUseSameLink(msgID uint16) bool {
+	switch msgID {
+	case jtt809.MsgIDLoginRequest, // 0x1001 主链路登录请求
+		jtt809.MsgIDLoginResponse,   // 0x1002 主链路登录应答
+		jtt809.MsgIDDownlinkConnReq, // 0x9001 从链路登录请求
+		0x9002:                      // 从链路登录应答
+		return true
+	default:
+		return false
+	}
+}
+
+// selectResponseLink 根据接收链路和消息类型选择响应链路
+// 返回值：("main"|"sub", shouldUseMain bool)
+func selectResponseLink(receivedOnMain bool, msgID uint16) (linkName string, useMain bool) {
+	// 登录消息使用相同链路
+	if shouldUseSameLink(msgID) {
+		if receivedOnMain {
+			return "main", true
+		}
+		return "sub", false
+	}
+
+	// 其他消息使用相反链路
+	if receivedOnMain {
+		return "sub", false
+	}
+	return "main", true
+}
+
+// sendResponseOnLink 根据消息类型和链路状态选择合适的链路发送响应，支持降级
+func (g *JT809Gateway) sendResponseOnLink(receivedOnMain bool, userID uint32, frame *jtt809.Frame, body jtt809.Body) error {
+	pkg := jtt809.Package{
+		Header: frame.Header.WithResponse(body.MsgID()),
+		Body:   body,
+	}
+	data, err := jtt809.EncodePackage(pkg)
+	if err != nil {
+		return fmt.Errorf("encode package: %w", err)
+	}
+
+	// 选择响应链路
+	linkName, useMain := selectResponseLink(receivedOnMain, frame.BodyID)
+	mainActive, subActive := g.store.GetLinkStatus(userID)
+
+	// 尝试首选链路
+	if useMain {
+		if mainActive {
+			if sessionID, ok := g.store.GetMainSession(userID); ok {
+				if session, err := g.mainSrv.GetSessionByID(sessionID); err == nil {
+					g.logPacket(linkName, "send", session.ID, data)
+					if err := session.Send(data); err == nil {
+						return nil
+					}
+					slog.Warn("send on main link failed, try fallback", "user_id", userID, "err", err)
+				}
+			}
+		}
+		// 主链路不可用，降级到从链路
+		if subActive {
+			if subClient, ok := g.store.GetSubClient(userID); ok {
+				slog.Info("main link unavailable, fallback to sub link", "user_id", userID, "msg_id", fmt.Sprintf("0x%04X", body.MsgID()))
+				g.logPacket("sub(fallback)", "send", fmt.Sprintf("%d", userID), data)
+				return subClient.Send(data)
+			}
+		}
+	} else {
+		// 首选从链路
+		if subActive {
+			if subClient, ok := g.store.GetSubClient(userID); ok {
+				g.logPacket(linkName, "send", fmt.Sprintf("%d", userID), data)
+				if err := subClient.Send(data); err == nil {
+					return nil
+				}
+				slog.Warn("send on sub link failed, try fallback", "user_id", userID, "err", err)
+			}
+		}
+		// 从链路不可用，降级到主链路
+		if mainActive {
+			if sessionID, ok := g.store.GetMainSession(userID); ok {
+				if session, err := g.mainSrv.GetSessionByID(sessionID); err == nil {
+					slog.Info("sub link unavailable, fallback to main link", "user_id", userID, "msg_id", fmt.Sprintf("0x%04X", body.MsgID()))
+					g.logPacket("main(fallback)", "send", session.ID, data)
+					return session.Send(data)
+				}
+			}
+		}
+	}
+
+	return fmt.Errorf("no available link for platform %d", userID)
 }
 
 func (g *JT809Gateway) simpleResponse(session *goserver.AppSession, link string, frame *jtt809.Frame, body jtt809.Body) ([]byte, error) {
@@ -673,6 +934,16 @@ func (g *JT809Gateway) checkVehiclePositions() {
 			if vehicle.PositionTime.IsZero() {
 				// 如果有注册信息，说明车辆已注册，尝试订阅
 				if vehicle.Registration != nil {
+					// 先判断注册时间是否超过10分钟，超过则删除
+					if now.Sub(vehicle.Registration.ReceivedAt) > 10*time.Minute {
+						g.store.RemoveVehicle(snap.UserID, vehicleKey)
+						slog.Warn("vehicle registration expired, removed",
+							"user_id", snap.UserID,
+							"plate", vehicle.VehicleNo,
+							"registration_time", vehicle.Registration.ReceivedAt.Format("2006-01-02 15:04:05"))
+						continue
+					}
+
 					req := MonitorRequest{
 						UserID:       snap.UserID,
 						VehicleNo:    vehicle.VehicleNo,

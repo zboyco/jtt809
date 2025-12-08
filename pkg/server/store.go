@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -27,8 +28,9 @@ type PlatformState struct {
 	VerifyCode    uint32 // 用于从链路重连
 	Reconnecting  bool   // 是否正在重连，防止重复重连
 
-	LastMainHeartbeat time.Time
-	LastSubHeartbeat  time.Time
+	LastMainHeartbeat  time.Time
+	LastSubHeartbeat   time.Time
+	MainDisconnectedAt time.Time // 主链路断开时间，用于超时管理
 
 	// 视频鉴权相关（平台级别，不与具体车辆关联）
 	PlatformID string // 平台唯一编码
@@ -72,18 +74,19 @@ type VideoAckState struct {
 
 // PlatformSnapshot 用于对外展示平台及车辆状态。
 type PlatformSnapshot struct {
-	UserID        uint32            `json:"user_id"`
-	GNSSCenterID  uint32            `json:"gnss_center_id"`
-	DownLinkIP    string            `json:"down_link_ip"`
-	DownLinkPort  uint16            `json:"down_link_port"`
-	MainSessionID string            `json:"main_session_id"`
-	SubConnected  bool              `json:"sub_connected"`
-	VerifyCode    uint32            `json:"-"` // 不对外暴露
-	LastMainBeat  time.Time         `json:"last_main_heartbeat"`
-	LastSubBeat   time.Time         `json:"last_sub_heartbeat"`
-	PlatformID    string            `json:"platform_id,omitempty"` // 平台唯一编码
-	AuthCode      string            `json:"auth_code,omitempty"`   // 时效口令
-	Vehicles      []VehicleSnapshot `json:"vehicles"`
+	UserID             uint32            `json:"user_id"`
+	GNSSCenterID       uint32            `json:"gnss_center_id"`
+	DownLinkIP         string            `json:"down_link_ip"`
+	DownLinkPort       uint16            `json:"down_link_port"`
+	MainSessionID      string            `json:"main_session_id"`
+	SubConnected       bool              `json:"sub_connected"`
+	VerifyCode         uint32            `json:"-"` // 不对外暴露
+	LastMainBeat       time.Time         `json:"last_main_heartbeat"`
+	LastSubBeat        time.Time         `json:"last_sub_heartbeat"`
+	MainDisconnectedAt time.Time         `json:"main_disconnected_at,omitempty"` // 主链路断开时间
+	PlatformID         string            `json:"platform_id,omitempty"`          // 平台唯一编码
+	AuthCode           string            `json:"auth_code,omitempty"`            // 时效口令
+	Vehicles           []VehicleSnapshot `json:"vehicles"`
 }
 
 // VehicleSnapshot 为单车数据提供可序列化视图。
@@ -118,6 +121,7 @@ func (s *PlatformStore) BindMainSession(sessionID string, req jtt809.LoginReques
 	state.MainSessionID = sessionID
 	state.VerifyCode = verifyCode
 	state.LastMainHeartbeat = time.Now()
+	state.MainDisconnectedAt = time.Time{} // 清除断开时间戳，表示已重连
 	s.sessionIndex[sessionID] = req.UserID
 }
 
@@ -159,21 +163,15 @@ func (s *PlatformStore) RemoveSession(sessionID string) {
 		s.mu.Unlock()
 		return
 	}
-	var clientToClose *client.SimpleClient
 	if state.MainSessionID == sessionID {
+		// 主链路断开时，不关闭从链路，以支持降级场景
+		// 从链路可以继续接收下级平台的降级请求
 		state.MainSessionID = ""
-		// 保存连接引用，在锁外关闭以避免死锁
-		// 主链路断开时，从链路不需要重连
-		clientToClose = state.SubClient
-		state.SubClient = nil
+		state.MainDisconnectedAt = time.Now() // 记录主链路断开时间
+		slog.Info("main link disconnected, sub link remains active", "user_id", userID, "session", sessionID)
 	}
 	delete(s.sessionIndex, sessionID)
 	s.mu.Unlock()
-
-	// 在锁外关闭连接，避免与readSubLinkLoop的defer中的ClearSubConn死锁
-	if clientToClose != nil {
-		clientToClose.Close()
-	}
 }
 
 // UpdateVehicleRegistration 存储车辆注册信息。
@@ -279,6 +277,25 @@ func (s *PlatformStore) ClearSubConn(userID uint32) {
 	}
 }
 
+// CloseSubLink 关闭从链路连接（用于主链路断开超时清理）
+func (s *PlatformStore) CloseSubLink(userID uint32) {
+	s.mu.Lock()
+	state, ok := s.platforms[userID]
+	if !ok || state.SubClient == nil {
+		s.mu.Unlock()
+		return
+	}
+	clientToClose := state.SubClient
+	state.SubClient = nil
+	state.MainDisconnectedAt = time.Time{} // 清除断开时间戳
+	s.mu.Unlock()
+
+	// 在锁外关闭连接
+	if clientToClose != nil {
+		clientToClose.Close()
+	}
+}
+
 // SetReconnecting 设置重连标志
 func (s *PlatformStore) SetReconnecting(userID uint32, reconnecting bool) bool {
 	s.mu.Lock()
@@ -293,6 +310,39 @@ func (s *PlatformStore) SetReconnecting(userID uint32, reconnecting bool) bool {
 	}
 	state.Reconnecting = reconnecting
 	return true
+}
+
+// GetMainSession 获取主链路的 session ID
+func (s *PlatformStore) GetMainSession(userID uint32) (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	state, ok := s.platforms[userID]
+	if !ok || state.MainSessionID == "" {
+		return "", false
+	}
+	return state.MainSessionID, true
+}
+
+// GetSubClient 获取从链路的客户端连接
+func (s *PlatformStore) GetSubClient(userID uint32) (*client.SimpleClient, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	state, ok := s.platforms[userID]
+	if !ok || state.SubClient == nil {
+		return nil, false
+	}
+	return state.SubClient, true
+}
+
+// GetLinkStatus 获取链路状态，返回主链路和从链路是否可用
+func (s *PlatformStore) GetLinkStatus(userID uint32) (mainActive bool, subActive bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	state, ok := s.platforms[userID]
+	if !ok {
+		return false, false
+	}
+	return state.MainSessionID != "", state.SubClient != nil
 }
 
 func (s *PlatformStore) ensurePlatformLocked(userID uint32) *PlatformState {
@@ -334,18 +384,19 @@ func (s *PlatformStore) RemoveVehicle(userID uint32, vehicleKey string) {
 
 func (state *PlatformState) snapshotLocked() PlatformSnapshot {
 	snap := PlatformSnapshot{
-		UserID:        state.UserID,
-		GNSSCenterID:  state.GNSSCenterID,
-		DownLinkIP:    state.DownLinkIP,
-		DownLinkPort:  state.DownLinkPort,
-		MainSessionID: state.MainSessionID,
-		SubConnected:  state.SubClient != nil,
-		VerifyCode:    state.VerifyCode,
-		LastMainBeat:  state.LastMainHeartbeat,
-		LastSubBeat:   state.LastSubHeartbeat,
-		PlatformID:    state.PlatformID,
-		AuthCode:      state.AuthCode,
-		Vehicles:      make([]VehicleSnapshot, 0, len(state.Vehicles)),
+		UserID:             state.UserID,
+		GNSSCenterID:       state.GNSSCenterID,
+		DownLinkIP:         state.DownLinkIP,
+		DownLinkPort:       state.DownLinkPort,
+		MainSessionID:      state.MainSessionID,
+		SubConnected:       state.SubClient != nil,
+		VerifyCode:         state.VerifyCode,
+		LastMainBeat:       state.LastMainHeartbeat,
+		LastSubBeat:        state.LastSubHeartbeat,
+		MainDisconnectedAt: state.MainDisconnectedAt,
+		PlatformID:         state.PlatformID,
+		AuthCode:           state.AuthCode,
+		Vehicles:           make([]VehicleSnapshot, 0, len(state.Vehicles)),
 	}
 	for _, v := range state.Vehicles {
 		vs := VehicleSnapshot{

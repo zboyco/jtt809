@@ -23,7 +23,10 @@ type VideoRequest struct {
 	GnssHex      string `json:"gnss_hex,omitempty"`
 }
 
-// RequestVideoStream 通过主链路向下级平台发送实时视频请求。
+// RequestVideoStream 通过从链路向下级平台发送实时视频请求（0x9801 下行实时音视频）。
+// 注意：0x9801 是上级→下级的下行消息，应该通过从链路发送；
+//
+//	0x1801 是下级→上级的上行消息，通过主链路发送。
 func (g *JT809Gateway) RequestVideoStream(req VideoRequest) error {
 	if req.VehicleNo == "" {
 		return errors.New("vehicle_no is required")
@@ -39,17 +42,21 @@ func (g *JT809Gateway) RequestVideoStream(req VideoRequest) error {
 	if !ok {
 		return fmt.Errorf("platform %d not online", req.UserID)
 	}
-	if snap.MainSessionID == "" {
-		return errors.New("main link is not established")
+	// 视频请求是下行消息（0x9801），应该通过从链路发送
+	if !snap.SubConnected {
+		return errors.New("sub link is not established")
 	}
 	if snap.GNSSCenterID == 0 {
 		return fmt.Errorf("gnss_center_id is missing for platform %d, abort send", req.UserID)
 	}
-	session, err := g.mainSrv.GetSessionByID(snap.MainSessionID)
-	if err != nil {
-		return fmt.Errorf("fetch session: %w", err)
+	subClient, ok := g.store.GetSubClient(req.UserID)
+	if !ok {
+		return errors.New("sub link client not available")
 	}
-	var gnssData []byte
+	var (
+		gnssData []byte
+		err      error
+	)
 	if strings.TrimSpace(req.GnssHex) != "" {
 		gnssData, err = hex.DecodeString(strings.TrimSpace(req.GnssHex))
 		if err != nil {
@@ -87,8 +94,9 @@ func (g *JT809Gateway) RequestVideoStream(req VideoRequest) error {
 	if err != nil {
 		return fmt.Errorf("encode package: %w", err)
 	}
-	if err := sendFrame(session, data); err != nil {
-		return err
+	// 通过从链路发送
+	if err := subClient.Send(data); err != nil {
+		return fmt.Errorf("send frame: %w", err)
 	}
 	slog.Info("video request sent", "user_id", req.UserID, "plate", req.VehicleNo, "channel", req.ChannelID)
 	return nil
