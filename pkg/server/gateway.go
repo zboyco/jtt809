@@ -207,6 +207,13 @@ func (g *JT809Gateway) connectSubLinkWithRetry(userID uint32) {
 	defer g.store.SetReconnecting(userID, false)
 
 	for {
+		// 检查从链路是否已连接（防止竞态条件导致重复连接）
+		_, subActive := g.store.GetLinkStatus(userID)
+		if subActive {
+			slog.Info("sub link already connected, stop reconnecting", "user_id", userID)
+			return
+		}
+
 		// 检查主链路是否仍然活跃
 		snap, ok := g.store.Snapshot(userID)
 		if !ok || snap.MainSessionID == "" {
