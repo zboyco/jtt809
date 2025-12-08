@@ -303,14 +303,16 @@ func (g *JT809Gateway) connectSubLink(ip string, port uint16, userID uint32, gns
 		conn.SetDeadline(time.Time{})
 	}
 
-	g.store.BindSubSession(userID, c)
+	// 创建 context 用于控制从链路相关 goroutine 的生命周期
+	ctx, cancel := context.WithCancel(context.Background())
+	g.store.BindSubSession(userID, c, ctx, cancel)
 
-	go g.readSubLinkLoop(c, userID, gnssCenterID, verifyCode, true)
-	go g.keepAliveSubLink(c, userID)
+	go g.readSubLinkLoop(ctx, c, userID, gnssCenterID, verifyCode, true)
+	go g.keepAliveSubLink(ctx, c, userID)
 	return true
 }
 
-func (g *JT809Gateway) readSubLinkLoop(c *client.SimpleClient, userID uint32, gnssCenterID uint32, verifyCode uint32, shouldReconnect bool) {
+func (g *JT809Gateway) readSubLinkLoop(ctx context.Context, c *client.SimpleClient, userID uint32, gnssCenterID uint32, verifyCode uint32, shouldReconnect bool) {
 	defer func() {
 		c.Close()
 		g.store.ClearSubConn(userID)
@@ -320,13 +322,28 @@ func (g *JT809Gateway) readSubLinkLoop(c *client.SimpleClient, userID uint32, gn
 			go g.reconnectSubLink(userID)
 		}
 	}()
+
+	// 启用一个 goroutine 监听 context 取消
+	done := make(chan struct{})
+	go func() {
+		<-ctx.Done()
+		slog.Info("sub read loop stopping due to context cancel", "user_id", userID)
+		c.Close() // 关闭连接以中断 Receive() 调用
+		close(done)
+	}()
+
 	for {
-		data, err := c.Receive()
-		if err != nil {
-			slog.Error("sub link read error", "user_id", userID, "err", err)
+		select {
+		case <-done:
 			return
+		default:
+			data, err := c.Receive()
+			if err != nil {
+				slog.Error("sub link read error", "user_id", userID, "err", err)
+				return
+			}
+			g.handleSubMessage(userID, data)
 		}
-		g.handleSubMessage(userID, data)
 	}
 }
 
@@ -387,28 +404,34 @@ func (g *JT809Gateway) checkConnections() {
 	g.checkVehiclePositions()
 }
 
-func (g *JT809Gateway) keepAliveSubLink(c *client.SimpleClient, userID uint32) {
+func (g *JT809Gateway) keepAliveSubLink(ctx context.Context, c *client.SimpleClient, userID uint32) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
-	for range ticker.C {
-		snap, ok := g.store.Snapshot(userID)
-		if !ok {
-			slog.Warn("skip sub heartbeat, snapshot missing", "user_id", userID)
-			continue
-		}
-		if snap.GNSSCenterID == 0 {
-			slog.Warn("skip sub heartbeat, missing GNSSCenterID", "user_id", userID)
-			continue
-		}
-		hb, _ := jtt809.BuildSubLinkHeartbeat(jtt809.Header{
-			GNSSCenterID: snap.GNSSCenterID,
-		})
-		g.logPacket("sub", "send", fmt.Sprintf("%d", userID), hb)
-		if err := c.Send(hb); err != nil {
-			slog.Warn("send sub heartbeat failed", "user_id", userID, "err", err)
-			// 心跳失败，主动关闭连接以触发readSubLinkLoop退出
-			c.Close()
+	for {
+		select {
+		case <-ctx.Done():
+			slog.Info("sub heartbeat goroutine stopped", "user_id", userID)
 			return
+		case <-ticker.C:
+			snap, ok := g.store.Snapshot(userID)
+			if !ok {
+				slog.Warn("skip sub heartbeat, snapshot missing", "user_id", userID)
+				continue
+			}
+			if snap.GNSSCenterID == 0 {
+				slog.Warn("skip sub heartbeat, missing GNSSCenterID", "user_id", userID)
+				continue
+			}
+			hb, _ := jtt809.BuildSubLinkHeartbeat(jtt809.Header{
+				GNSSCenterID: snap.GNSSCenterID,
+			})
+			g.logPacket("sub", "send", fmt.Sprintf("%d", userID), hb)
+			if err := c.Send(hb); err != nil {
+				slog.Warn("send sub heartbeat failed", "user_id", userID, "err", err)
+				// 心跳失败，主动关闭连接以触发readSubLinkLoop退出
+				c.Close()
+				return
+			}
 		}
 	}
 }
