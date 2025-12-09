@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"strings"
 
-	goserver "github.com/zboyco/go-server"
 	"github.com/zboyco/jtt809/pkg/jtt809"
 	"github.com/zboyco/jtt809/pkg/jtt809/jt1078"
 )
@@ -99,16 +98,6 @@ func (g *JT809Gateway) RequestVideoStream(req VideoRequest) error {
 		return fmt.Errorf("send frame: %w", err)
 	}
 	slog.Info("video request sent", "user_id", req.UserID, "plate", req.VehicleNo, "channel", req.ChannelID)
-	return nil
-}
-
-func sendFrame(session *goserver.AppSession, data []byte) error {
-	if session == nil {
-		return errors.New("session is nil")
-	}
-	if err := session.Send(data); err != nil {
-		return fmt.Errorf("send frame: %w", err)
-	}
 	return nil
 }
 

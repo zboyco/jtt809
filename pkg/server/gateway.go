@@ -18,6 +18,26 @@ import (
 	"github.com/zboyco/jtt809/pkg/jtt809/jt1078"
 )
 
+// LinkPolicy 链路策略配置
+type LinkPolicy struct {
+	PreferredLink string // "main" 或 "sub"
+	AllowFallback bool   // 是否允许降级
+}
+
+// 链路策略配置表
+var linkPolicies = map[uint16]LinkPolicy{
+	jtt809.MsgIDLoginResponse:        {PreferredLink: "main", AllowFallback: false}, // 0x1002 主链路登录应答，不能降级
+	jtt809.MsgIDDownlinkConnReq:      {PreferredLink: "sub", AllowFallback: false},  // 0x9001 从链路登录请求，不能降级
+	jtt809.MsgIDDownHeartbeatRequest: {PreferredLink: "sub", AllowFallback: false},  // 0x9005 从链路心跳请求，不能降级
+	jtt809.MsgIDDownDisconnectInform: {PreferredLink: "main", AllowFallback: false}, // 0x9007 从链路断开通知，只能主链路
+}
+
+// 默认策略：从链路，允许降级
+var defaultLinkPolicy = LinkPolicy{
+	PreferredLink: "sub",
+	AllowFallback: true,
+}
+
 // JT809Gateway 负责承载主/从链路 TCP 服务与业务处理。
 type JT809Gateway struct {
 	cfg   Config
@@ -127,7 +147,14 @@ func (g *JT809Gateway) handleMainMessage(session *goserver.AppSession, payload [
 	case jtt809.MsgIDHeartbeatRequest:
 		return g.handleHeartbeat(session, frame, true)
 	case jtt809.MsgIDLogoutRequest:
-		return g.simpleResponse(session, "main", frame, jtt809.LogoutResponse{})
+		user, ok := g.sessionUser(session)
+		if ok {
+			resp := jtt809.LogoutResponse{}
+			if err := g.SendToSubordinate(user, frame.Header, resp); err != nil {
+				slog.Error("send logout response failed", "user_id", user, "err", err)
+			}
+		}
+		return nil, nil
 	case jtt809.MsgIDDownDisconnectInform:
 		g.handleDisconnectInform(session, frame)
 	default:
@@ -207,13 +234,17 @@ func (g *JT809Gateway) handleMainLogin(session *goserver.AppSession, frame *jtt8
 		// Start Sub Link Connection
 		go g.connectSubLinkWithRetry(req.UserID, false)
 	}
-	// 主链路登录应答应该在主链路返回（使用相同链路）
-	data, respErr := g.simpleResponse(session, "main", frame, resp)
+
+	// 主链路登录应答通过统一方法发送（配置为主链路，不允许降级）
+	if err := g.SendToSubordinate(req.UserID, frame.Header, resp); err != nil {
+		slog.Error("send login response failed", "user_id", req.UserID, "err", err)
+	}
+
 	if resp.Result != jtt809.LoginOK {
 		// 登录失败后立即断开
 		session.Close("login failed")
 	}
-	return data, respErr
+	return nil, nil
 }
 
 func (g *JT809Gateway) connectSubLinkWithRetry(userID uint32, isReconnect bool) {
@@ -282,26 +313,17 @@ func (g *JT809Gateway) sendDownDisconnectInform(userID uint32, code jtt809.Disco
 		return
 	}
 
-	// 获取主链路 Session
-	sessionID := snap.MainSessionID
-	_, err := g.mainSrv.GetSessionByID(sessionID)
-	if err != nil {
-		slog.Warn("get main session failed for disconnect inform", "user_id", userID, "err", err)
-		return
-	}
-
 	// 构造消息
 	msg := jtt809.DownDisconnectInform{ErrorCode: code}
-	// 注意：这里需要构造完整的 0x9007 报文，并复用 Header 信息（流水号自动生成）
-	fakeHeader := jtt809.Header{
+	header := jtt809.Header{
 		GNSSCenterID: snap.GNSSCenterID,
-		Version:      jtt809.Version{Major: 1, Minor: 0, Patch: 0}, // 使用默认或存储的版本
+		Version:      jtt809.Version{Major: 1, Minor: 0, Patch: 0},
 		EncryptFlag:  0,
 		EncryptKey:   0,
 	}
 
-	// 发送
-	if err := g.sendResponseOnLink(true, userID, &jtt809.Frame{Header: fakeHeader, BodyID: msg.MsgID()}, msg); err != nil {
+	// 通过统一方法发送（配置为主链路，不允许降级）
+	if err := g.SendToSubordinate(userID, header, msg); err != nil {
 		slog.Warn("send 0x9007 failed", "user_id", userID, "err", err)
 	}
 }
@@ -380,7 +402,7 @@ func (g *JT809Gateway) connectSubLink(ip string, port uint16, userID uint32, gns
 
 	// 创建 context 用于控制从链路相关 goroutine 的生命周期
 	ctx, cancel := context.WithCancel(context.Background())
-	g.store.BindSubSession(userID, c, ctx, cancel)
+	g.store.BindSubSession(userID, c, cancel)
 
 	go g.readSubLinkLoop(ctx, c, userID, gnssCenterID, verifyCode, true)
 	go g.keepAliveSubLink(ctx, c, userID)
@@ -520,10 +542,9 @@ func (g *JT809Gateway) handleHeartbeat(session *goserver.AppSession, frame *jtt8
 
 	g.store.RecordHeartbeat(user, isMain)
 
-	// 主链路心跳请求，应答通过从链路发送（支持降级到主链路）
 	slog.Info("main link heartbeat", "session", session.ID, "user_id", user)
 	resp := jtt809.HeartbeatResponse{}
-	if err := g.sendResponseOnLink(true, user, frame, resp); err != nil {
+	if err := g.SendToSubordinate(user, frame.Header, resp); err != nil {
 		slog.Error("send heartbeat response failed", "user_id", user, "err", err)
 	}
 	return nil, nil
@@ -669,10 +690,6 @@ func (g *JT809Gateway) handlePlatformInfo(userID uint32, frame *jtt809.Frame) {
 	slog.Debug("unhandled platform info sub", "user_id", userID, "sub_id", fmt.Sprintf("0x%04X", pkt.SubBusinessID))
 }
 
-
-
-
-
 func (g *JT809Gateway) handleAlarmInteract(session *goserver.AppSession, frame *jtt809.Frame) {
 	sessionID := ""
 	if session != nil {
@@ -753,43 +770,20 @@ func (g *JT809Gateway) getClientIP(session *goserver.AppSession) string {
 	return addr.String()
 }
 
-// shouldUseSameLink 判断响应是否应该使用与请求相同的链路
-// 返回 true 表示使用相同链路（如登录消息）
-// 返回 false 表示使用相反链路
-func shouldUseSameLink(msgID uint16) bool {
-	switch msgID {
-	case jtt809.MsgIDLoginRequest, // 0x1001 主链路登录请求
-		jtt809.MsgIDLoginResponse,    // 0x1002 主链路登录应答
-		jtt809.MsgIDDownlinkConnReq,  // 0x9001 从链路登录请求
-		jtt809.MsgIDDownlinkConnResp: // 从链路登录应答
-		return true
-	default:
-		return false
-	}
-}
+// SendToSubordinate 向下级平台发送消息（统一发送方法）
+// 根据消息类型自动选择链路，支持降级
+func (g *JT809Gateway) SendToSubordinate(userID uint32, header jtt809.Header, body jtt809.Body) error {
+	msgID := body.MsgID()
 
-// selectResponseLink 根据接收链路和消息类型选择响应链路
-// 返回值：("main"|"sub", shouldUseMain bool)
-func selectResponseLink(receivedOnMain bool, msgID uint16) (linkName string, useMain bool) {
-	// 登录消息使用相同链路
-	if shouldUseSameLink(msgID) {
-		if receivedOnMain {
-			return "main", true
-		}
-		return "sub", false
+	// 获取链路策略
+	policy, ok := linkPolicies[msgID]
+	if !ok {
+		policy = defaultLinkPolicy
 	}
 
-	// 其他消息使用相反链路
-	if receivedOnMain {
-		return "sub", false
-	}
-	return "main", true
-}
-
-// sendResponseOnLink 根据消息类型和链路状态选择合适的链路发送响应，支持降级
-func (g *JT809Gateway) sendResponseOnLink(receivedOnMain bool, userID uint32, frame *jtt809.Frame, body jtt809.Body) error {
+	// 构造消息包
 	pkg := jtt809.Package{
-		Header: frame.Header.WithResponse(body.MsgID()),
+		Header: header.WithResponse(msgID),
 		Body:   body,
 	}
 	data, err := jtt809.EncodePackage(pkg)
@@ -797,67 +791,67 @@ func (g *JT809Gateway) sendResponseOnLink(receivedOnMain bool, userID uint32, fr
 		return fmt.Errorf("encode package: %w", err)
 	}
 
-	// 选择响应链路
-	linkName, useMain := selectResponseLink(receivedOnMain, frame.BodyID)
+	// 获取链路状态
 	mainActive, subActive := g.store.GetLinkStatus(userID)
 
-	// 尝试首选链路
-	if useMain {
+	// 根据策略选择链路
+	if policy.PreferredLink == "main" {
+		// 首选主链路
 		if mainActive {
-			if sessionID, ok := g.store.GetMainSession(userID); ok {
-				if session, err := g.mainSrv.GetSessionByID(sessionID); err == nil {
-					g.logPacket(linkName, "send", session.ID, data)
-					if err := session.Send(data); err == nil {
-						return nil
-					}
-					slog.Warn("send on main link failed, try fallback", "user_id", userID, "err", err)
-				}
+			if err := g.sendOnMainLink(userID, data); err == nil {
+				return nil
 			}
+			slog.Warn("send on main link failed", "user_id", userID, "msg_id", fmt.Sprintf("0x%04X", msgID), "err", err)
 		}
-		// 主链路不可用，降级到从链路
-		if subActive {
-			if subClient, ok := g.store.GetSubClient(userID); ok {
-				slog.Info("main link unavailable, fallback to sub link", "user_id", userID, "msg_id", fmt.Sprintf("0x%04X", body.MsgID()))
-				g.logPacket("sub(fallback)", "send", fmt.Sprintf("%d", userID), data)
-				return subClient.Send(data)
+		// 主链路不可用，尝试降级
+		if policy.AllowFallback && subActive {
+			slog.Info("main link unavailable, fallback to sub link", "user_id", userID, "msg_id", fmt.Sprintf("0x%04X", msgID))
+			if err := g.sendOnSubLink(userID, data); err == nil {
+				return nil
 			}
 		}
 	} else {
 		// 首选从链路
 		if subActive {
-			if subClient, ok := g.store.GetSubClient(userID); ok {
-				g.logPacket(linkName, "send", fmt.Sprintf("%d", userID), data)
-				if err := subClient.Send(data); err == nil {
-					return nil
-				}
-				slog.Warn("send on sub link failed, try fallback", "user_id", userID, "err", err)
+			if err := g.sendOnSubLink(userID, data); err == nil {
+				return nil
 			}
+			slog.Warn("send on sub link failed", "user_id", userID, "msg_id", fmt.Sprintf("0x%04X", msgID), "err", err)
 		}
-		// 从链路不可用，降级到主链路
-		if mainActive {
-			if sessionID, ok := g.store.GetMainSession(userID); ok {
-				if session, err := g.mainSrv.GetSessionByID(sessionID); err == nil {
-					slog.Info("sub link unavailable, fallback to main link", "user_id", userID, "msg_id", fmt.Sprintf("0x%04X", body.MsgID()))
-					g.logPacket("main(fallback)", "send", session.ID, data)
-					return session.Send(data)
-				}
+		// 从链路不可用，尝试降级
+		if policy.AllowFallback && mainActive {
+			slog.Info("sub link unavailable, fallback to main link", "user_id", userID, "msg_id", fmt.Sprintf("0x%04X", msgID))
+			if err := g.sendOnMainLink(userID, data); err == nil {
+				return nil
 			}
 		}
 	}
 
-	return fmt.Errorf("no available link for platform %d", userID)
+	return fmt.Errorf("no available link for platform %d, msg_id=0x%04X", userID, msgID)
 }
 
-func (g *JT809Gateway) simpleResponse(session *goserver.AppSession, link string, frame *jtt809.Frame, body jtt809.Body) ([]byte, error) {
-	pkg := jtt809.Package{
-		Header: frame.Header.WithResponse(body.MsgID()),
-		Body:   body,
+// sendOnMainLink 在主链路发送数据
+func (g *JT809Gateway) sendOnMainLink(userID uint32, data []byte) error {
+	sessionID, ok := g.store.GetMainSession(userID)
+	if !ok {
+		return fmt.Errorf("main session not found")
 	}
-	data, err := jtt809.EncodePackage(pkg)
-	if err == nil {
-		g.logPacket(link, "send", session.ID, data)
+	session, err := g.mainSrv.GetSessionByID(sessionID)
+	if err != nil {
+		return fmt.Errorf("get session failed: %w", err)
 	}
-	return data, err
+	g.logPacket("main", "send", session.ID, data)
+	return session.Send(data)
+}
+
+// sendOnSubLink 在从链路发送数据
+func (g *JT809Gateway) sendOnSubLink(userID uint32, data []byte) error {
+	subClient, ok := g.store.GetSubClient(userID)
+	if !ok {
+		return fmt.Errorf("sub client not found")
+	}
+	g.logPacket("sub", "send", fmt.Sprintf("%d", userID), data)
+	return subClient.Send(data)
 }
 
 func (g *JT809Gateway) logPacket(link, dir, sessionID string, data []byte) {
@@ -902,9 +896,7 @@ func splitJT809Frames(data []byte, atEOF bool) (advance int, token []byte, err e
 		return 0, nil, nil
 	}
 	stop++ // compensate slicing offset
-	frame := make([]byte, stop+1)
-	copy(frame, data[:stop+1])
-	return stop + 1, frame, nil
+	return stop + 1, data[:stop+1], nil
 }
 
 func (g *JT809Gateway) handleAuthorize(userID uint32, frame *jtt809.Frame) {
@@ -1046,8 +1038,8 @@ func (g *JT809Gateway) checkVehiclePositions() {
 	}
 }
 
-// SendDownlinkMessage 发送下行消息，支持主/从链路自动选择与降级
-// 优先使用从链路，不可用时降级到主链路
+// SendDownlinkMessage 发送下行消息（主动下发）
+// 使用统一的发送方法，根据消息类型自动选择链路并支持降级
 func (g *JT809Gateway) SendDownlinkMessage(userID uint32, body jtt809.Body) error {
 	snap, ok := g.store.Snapshot(userID)
 	if !ok || snap.MainSessionID == "" {
@@ -1061,39 +1053,6 @@ func (g *JT809Gateway) SendDownlinkMessage(userID uint32, body jtt809.Body) erro
 		EncryptKey:   0,
 		BusinessType: body.MsgID(),
 	}
-	pkg := jtt809.Package{
-		Header: header,
-		Body:   body,
-	}
-	data, err := jtt809.EncodePackage(pkg)
-	if err != nil {
-		return fmt.Errorf("encode package: %w", err)
-	}
 
-	_, subActive := g.store.GetLinkStatus(userID)
-
-	// 优先尝试从链路
-	if subActive {
-		g.store.mu.RLock()
-		subClient := g.store.platforms[userID].SubClient
-		g.store.mu.RUnlock()
-		if subClient != nil {
-			g.logPacket("sub", "send", fmt.Sprintf("%d", userID), data)
-			if err := subClient.Send(data); err == nil {
-				return nil
-			}
-			slog.Warn("send on sub link failed, try fallback", "user_id", userID, "err", err)
-		}
-	}
-
-	// 降级到主链路
-	if sessionID := snap.MainSessionID; sessionID != "" {
-		if session, err := g.mainSrv.GetSessionByID(sessionID); err == nil {
-			slog.Info("sub link unavailable, fallback to main link", "user_id", userID, "msg_id", fmt.Sprintf("0x%04X", body.MsgID()))
-			g.logPacket("main(fallback)", "send", session.ID, data)
-			return session.Send(data)
-		}
-	}
-
-	return fmt.Errorf("no available link for platform %d", userID)
+	return g.SendToSubordinate(userID, header, body)
 }

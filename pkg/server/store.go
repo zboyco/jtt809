@@ -30,7 +30,6 @@ type PlatformState struct {
 	Reconnecting  bool   // 是否正在重连，防止重复重连
 
 	// 从链路 goroutine 生命周期控制
-	SubLinkCtx    context.Context
 	SubLinkCancel context.CancelFunc
 
 	LastMainHeartbeat  time.Time
@@ -131,7 +130,7 @@ func (s *PlatformStore) BindMainSession(sessionID string, req jtt809.LoginReques
 }
 
 // BindSubSession 记录从链路连接。
-func (s *PlatformStore) BindSubSession(userID uint32, c *client.SimpleClient, ctx context.Context, cancel context.CancelFunc) {
+func (s *PlatformStore) BindSubSession(userID uint32, c *client.SimpleClient, cancel context.CancelFunc) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	state := s.ensurePlatformLocked(userID)
@@ -146,7 +145,6 @@ func (s *PlatformStore) BindSubSession(userID uint32, c *client.SimpleClient, ct
 
 	// 保存新的连接和 context
 	state.SubClient = c
-	state.SubLinkCtx = ctx
 	state.SubLinkCancel = cancel
 	state.LastSubHeartbeat = time.Now()
 }
@@ -292,7 +290,6 @@ func (s *PlatformStore) ClearSubConn(userID uint32) {
 			state.SubLinkCancel()
 		}
 		state.SubClient = nil
-		state.SubLinkCtx = nil
 		state.SubLinkCancel = nil
 	}
 }
