@@ -17,8 +17,9 @@ var (
 
 // Server represents the RTP proxy server
 type Server struct {
-	addr    string
-	manager *StreamManager
+	addr         string
+	manager      *StreamManager
+	parseRequest ParseRequestFunc
 }
 
 // ================= Server Instance =================
@@ -26,9 +27,20 @@ type Server struct {
 // NewVideoServer creates a new server instance
 func NewVideoServer(addr string) *Server {
 	return &Server{
-		addr:    addr,
-		manager: &StreamManager{},
+		addr:         addr,
+		manager:      &StreamManager{},
+		parseRequest: defaultParseRequest,
 	}
+}
+
+// SetParseRequest updates the request parsing logic for this server instance.
+// Passing nil reverts to the default parser.
+func (s *Server) SetParseRequest(fn ParseRequestFunc) {
+	if fn == nil {
+		s.parseRequest = defaultParseRequest
+		return
+	}
+	s.parseRequest = fn
 }
 
 // Start starts the server
@@ -53,8 +65,8 @@ func (s *Server) Start() error {
 		// 如果有主机名或者是无效格式，则直接使用s.addr
 	}
 
-	fmt.Printf("💡 裸流: http://%s/proxy?url=[JT/T 1078-2016 协议视频源地址]\n", displayAddr)
-	fmt.Printf("💡 FLV: http://%s/proxy.flv?url=[JT/T 1078-2016 协议视频源地址]\n", displayAddr)
+	fmt.Printf("💡 裸流: http://%s/proxy?xxx=yyy\n", displayAddr)
+	fmt.Printf("💡 FLV: http://%s/proxy.flv?xxx=yyy\n", displayAddr)
 	fmt.Println("===================================================")
 
 	return http.ListenAndServe(s.addr, nil)
@@ -63,7 +75,7 @@ func (s *Server) Start() error {
 // ================= HTTP Handlers =================
 
 func (s *Server) handleProxyRaw(w http.ResponseWriter, r *http.Request) {
-	targetURL, clientIP := parseRequest(r)
+	targetURL, clientIP := s.parseRequest(r)
 	if targetURL == "" {
 		http.Error(w, "missing url", 400)
 		return
@@ -81,7 +93,7 @@ func (s *Server) handleProxyRaw(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleProxyFLV(w http.ResponseWriter, r *http.Request) {
-	targetURL, clientIP := parseRequest(r)
+	targetURL, clientIP := s.parseRequest(r)
 	if targetURL == "" {
 		http.Error(w, "missing url", 400)
 		return
