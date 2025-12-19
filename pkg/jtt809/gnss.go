@@ -10,18 +10,23 @@ var loc = time.FixedZone("UTC+8", 8*3600)
 
 // GNSSData 表示车辆定位基础信息（表23）及附加信息（表26/27）。
 type GNSSData struct {
-	Alarm       uint32
-	State       uint32
-	Latitude    float64
-	Longitude   float64
-	Altitude    uint16 // 单位 m
-	Speed       uint16 // 车辆速度（0.1 km/h）
-	Direction   uint16 // 0-359°
-	DateTime    GNSSTime
-	Mileage     uint32          // 附加信息 0x01，单位 0.1 km
-	Fuel        uint16          // 附加信息 0x02，单位 0.1 L
-	RecordSpeed uint16          // 附加信息 0x03，行驶记录仪速度（0.1 km/h）
-	Additional  map[byte][]byte // 其他附加信息原始数据
+	Alarm          uint32
+	State          uint32
+	Latitude       float64
+	Longitude      float64
+	Altitude       uint16 // 单位 m
+	Speed          uint16 // 车辆速度（0.1 km/h）
+	Direction      uint16 // 0-359°
+	DateTime       GNSSTime
+	Mileage        uint32          // 附加信息 0x01，单位 0.1 km
+	Fuel           uint16          // 附加信息 0x02，单位 0.1 L
+	RecordSpeed    uint16          // 附加信息 0x03，行驶记录仪速度（0.1 km/h）
+	AlarmEventID   uint16          // 附加信息 0x04，需要人工确认报警事件的ID
+	TirePressure   [30]byte        // 附加信息 0x05，胎压，单位Pa，0xFF表示无效数据
+	Temperature    int16           // 附加信息 0x06，车厢温度，单位摄氏度，范围 -32767 ~ +32767
+	SignalStrength uint8           // 附加信息 0x30，无线通信网络信号强度
+	SatelliteCount uint8           // 附加信息 0x31，GNSS定位卫星数
+	Additional     map[byte][]byte // 其他附加信息原始数据
 }
 
 // GNSSTime 表示 GNSS 数据内的日期时间字段。
@@ -127,6 +132,26 @@ func ParseGNSSData(data []byte) (GNSSData, error) {
 		case 0x03: // 行驶记录仪速度
 			if l >= 2 {
 				gnss.RecordSpeed = binary.BigEndian.Uint16(val[:2])
+			}
+		case 0x04: // 需要人工确认报警事件的ID
+			if l >= 2 {
+				gnss.AlarmEventID = binary.BigEndian.Uint16(val[:2])
+			}
+		case 0x05: // 胎压
+			if l >= 30 {
+				copy(gnss.TirePressure[:], val[:30])
+			}
+		case 0x06: // 车厢温度
+			if l >= 2 {
+				gnss.Temperature = int16(binary.BigEndian.Uint16(val[:2]))
+			}
+		case 0x30: // 无线通信网络信号强度
+			if l >= 1 {
+				gnss.SignalStrength = val[0]
+			}
+		case 0x31: // GNSS定位卫星数
+			if l >= 1 {
+				gnss.SatelliteCount = val[0]
 			}
 		}
 	}
